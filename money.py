@@ -418,6 +418,7 @@ def show_balance(store: MoneyStore) -> int:
 def cmd_init(store: MoneyStore) -> int:
     store.init()
     print(f"Initialized money repo in {store.app_dir}")
+    print("   You're ready to start tracking. Stay consistent.")
     return 0
 
 
@@ -461,6 +462,7 @@ def cmd_reserve(store: MoneyStore, amount_text: str, identifier: str) -> int:
     available_after = available_before - amount
 
     print(f"Reserved {format_money(amount, currency)} for {reservation.label}")
+    print("   This money is now mentally 'locked' and shouldn't be spent elsewhere.")
     if available_after < 0:
         print("⚠️ This reservation pushes available money below zero. That is a real warning, not a typo.")
         print("   Usually this means you need to record the add first, or this money is already committed elsewhere.")
@@ -472,6 +474,12 @@ def cmd_settle(store: MoneyStore, identifier: str) -> int:
     reservation = store.remove_reservation(identifier)
 
     # Settling turns the reserved money into a real spend transaction.
+    # Before doing so, we check if this will push total below zero and warn the user.
+    txs = store.load_transactions()
+    current_total = summarize(txs)["total"]
+    if current_total - reservation.amount < 0:
+        print("⚠️ You are about to go into negative balance.")
+        print("   This means you are settling more than you currently have.")
     tx = Transaction(
         id=uuid4().hex,
         timestamp=now_str(),
@@ -503,6 +511,7 @@ def cmd_delete(store: MoneyStore, tx_id: str) -> int:
         raise AppError(f"More than one transaction matches {tx_id}. Use more characters.")
     if store.delete_transaction(matches[0].id):
         print(f"Deleted {matches[0].id[:8]}")
+        print("   That transaction is gone from history.")
         return 0
     raise AppError("Delete failed")
 
@@ -514,6 +523,7 @@ def cmd_undo(store: MoneyStore) -> int:
     last = txs.pop()
     store.save_transactions(txs)
     print(f"Removed last transaction: {last.id[:8]} {last.source} {last.action} {last.amount}")
+    print("   Undo does not restore reservations yet. Be mindful.")
     return 0
 
 
@@ -565,6 +575,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             sign = "+" if tx.action == "add" else "-"
             currency = store.load_config().get("currency", "BDT")
             print(f"Recorded {tx.id[:8]}: {tx.source} {sign}{format_money(tx.amount, currency)}")
+            if tx.action == "spend":
+                txs = store.load_transactions()
+                total = summarize(txs)["total"]
+                if total < 0:
+                    print("⚠️ Your total balance is now negative. This is real debt.")
             return 0
         except AppError as e:
             print(f"Error: {e}", file=sys.stderr)
