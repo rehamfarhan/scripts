@@ -392,15 +392,82 @@ def cmd_config(store: MoneyStore, args: argparse.Namespace) -> int:
     return 0
 
 
+def parse_quick_entry(argv: List[str]) -> Optional[Dict[str, str]]:
+    """Supports shorthand like:
+    money +500 Salary
+    money -90 Burger @place
+    """
+    if not argv:
+        return None
+
+    first = argv[0]
+    if not (first.startswith("+") or first.startswith("-")):
+        return None
+
+    sign = first[0]
+    amount_str = first[1:]
+
+    try:
+        amount = parse_amount(amount_str)
+    except AppError:
+        raise AppError("Invalid quick amount format")
+
+    rest = " ".join(argv[1:]).strip()
+    if not rest:
+        raise AppError("Provide a source or description")
+
+    # Split note and source using '@'
+    if "@" in rest:
+        note_part, source_part = rest.split("@", 1)
+        note = note_part.strip()
+        source = source_part.strip()
+    else:
+        source = rest
+        note = ""
+
+    action = "add" if sign == "+" else "spend"
+
+    return {
+        "source": source,
+        "action": action,
+        "amount": str(amount),
+        "note": note,
+    }
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    argv = argv if argv is not None else sys.argv[1:]
+
+    # 🔥 Quick mode (no command, just + / -)
+    quick = parse_quick_entry(argv)
+    store = MoneyStore(Path.cwd())
+
+    if quick:
+        try:
+            store._ensure_initialized()
+            tx = Transaction(
+                id=uuid4().hex,
+                timestamp=now_str(),
+                source=quick["source"],
+                action=quick["action"],
+                amount=float(quick["amount"]),
+                note=quick.get("note", ""),
+            )
+            store.add_transaction(tx)
+            sign = "+" if tx.action == "add" else "-"
+            currency = store.load_config().get("currency", "BDT")
+            print(f"Recorded {tx.id[:8]}: {tx.source} {sign}{format_money(tx.amount, currency)}")
+            return 0
+        except AppError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if not args.command:
         parser.print_help()
         return 1
-
-    store = MoneyStore(Path.cwd())
 
     try:
         if args.command == "init":
