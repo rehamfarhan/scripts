@@ -227,11 +227,15 @@ The tool simply reflects your behavior.
 
 All data is stored locally:
 
+```
+```
 .moneygit/
 ├── ledger.json        # transactions
 ├── reservations.json  # active reservations
 ├── history.json       # action history (for universal undo)
 └── config.json        # settings
+```
+```
 
 ---
 
