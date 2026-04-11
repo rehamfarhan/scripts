@@ -227,12 +227,11 @@ The tool simply reflects your behavior.
 
 All data is stored locally:
 
-```
 .moneygit/
 ├── ledger.json        # transactions
-├── reservations.json # active reservations
-└── config.json       # settings
-```
+├── reservations.json  # active reservations
+├── history.json       # action history (for universal undo)
+└── config.json        # settings
 
 ---
 
@@ -257,9 +256,58 @@ money status
 
 ---
 
+---
+
+# 🔄 Universal Undo System (history.json)
+
+The app uses a **history-based undo system** instead of only removing the last transaction.
+
+### 📁 history.json
+
+Stores every action performed:
+
+- transaction commits
+- reservations
+- settlements
+- deletions
+
+---
+
+## 🔁 How Undo Works
+
+money undo
+
+Reverses the **last action**, not just the last transaction.
+
+### Examples:
+
+#### Undo a transaction:
++500 Mom → undo → removed
+
+#### Undo a reservation:
+reserve 1200 RafiqulSir → undo → reservation removed
+
+#### Undo a settle:
+settle RafiqulSir → undo →
+- removes spend transaction
+- restores reservation
+
+---
+
+## 🧠 Why This Matters
+
+This makes undo:
+
+- consistent  
+- predictable  
+- safe  
+
+You no longer lose reservations accidentally.
+
+---
+
 # ⚠️ Known Limitations
 
-* `undo` does NOT restore reservations yet
 * no partial settle (by design)
 * deleting transactions can affect balance logic
 
