@@ -317,7 +317,6 @@ You no longer lose reservations accidentally.
 
 # 🛠️ Future Ideas
 
-* Smarter undo (restore reservations)
 * Category/tag system
 * Monthly reports
 * Export to CSV
