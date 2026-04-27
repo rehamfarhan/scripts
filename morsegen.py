@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import argparse
 
 MORSE = {
     'A': '.-',    'B': '-...',  'C': '-.-.',  'D': '-..',   'E': '.',
@@ -19,153 +20,118 @@ MORSE = {
     '$': '...-..-', '@': '.--.-.'
 }
 
-REVERSE_MORSE = {v: k for k, v in MORSE.items()}
-
-WORD_PLACEHOLDER = "\uE000"
-LETTER_PLACEHOLDER = "\uE001"
-DOT_PLACEHOLDER = "\uE002"
-DASH_PLACEHOLDER = "\uE003"
-
-def usage():
-    print("Usage:")
-    print("  morsegen <text>")
-    print("  morsegen -d <morse-text>")
-    print("  morsegen --decode <morse-text>")
-
-def validate_symbols(dot, dash, space):
-    if not dot or not dash or not space:
-        raise ValueError("Dot, dash, and space cannot be empty.")
-
-    if len({dot, dash, space}) != 3:
-        raise ValueError("Dot, dash, and space must all be different.")
-
-    symbols = {
-        "dot": dot,
-        "dash": dash,
-        "space": space
-    }
-
-    for name_a, a in symbols.items():
-        for name_b, b in symbols.items():
-            if name_a == name_b:
-                continue
-            if a in b or b in a:
-                raise ValueError(
-                    f"'{name_a}' and '{name_b}' cannot overlap or contain each other."
-                )
+REVERSE = {v: k for k, v in MORSE.items()}
 
 
-def prompt_symbols():
-    while True:
-        dot = input("Dot symbol: ")
-        dash = input("Dash symbol: ")
-        space = input("Space symbol: ")
+# ---------------- VALIDATION ----------------
+def validate(dot, dash, sep):
+    if len({dot, dash, sep}) != 3:
+        raise ValueError("dot, dash, and separator must be distinct.")
 
-        try:
-            validate_symbols(dot, dash, space)
-            return dot, dash, space
-        except ValueError as e:
-            print(f"\nInvalid symbol set: {e}")
-            print("Please try again.\n")
+    for a, b in [(dot, dash), (dot, sep), (dash, sep)]:
+        if a in b or b in a:
+            raise ValueError("symbols must not overlap or contain each other.")
 
 
-def encode_text(text, dot, dash, space):
-    words = text.split()
-    encoded_words = []
-    skipped_chars = []
+# ---------------- ENCODE ----------------
+def encode(text, dot, dash, sep):
+    words = text.upper().split()
+    out = []
 
     for word in words:
-        encoded_letters = []
-        for ch in word.upper():
+        letters = []
+        for ch in word:
             if ch in MORSE:
-                morse = MORSE[ch]
-                morse = morse.replace('.', dot).replace('-', dash)
-                encoded_letters.append(morse)
-            else:
-                skipped_chars.append(ch)
+                code = MORSE[ch].replace('.', dot).replace('-', dash)
+                letters.append(code)
+        out.append(sep.join(letters))
 
-        if encoded_letters:
-            encoded_words.append(space.join(encoded_letters))
-
-    if skipped_chars:
-        unique = "".join(sorted(set(skipped_chars)))
-        print(f"Warning: skipped unsupported characters: {unique}")
-
-    return (space * 3).join(encoded_words)
+    return (sep * 3).join(out)
 
 
-def decode_text(code, dot, dash, space):
-    # Replace the custom tokens with safe placeholders first.
-    # This makes decoding much more reliable with custom symbols.
-    ordered_tokens = sorted(
-        [
-            (space * 3, WORD_PLACEHOLDER),
-            (space, LETTER_PLACEHOLDER),
-            (dot, DOT_PLACEHOLDER),
-            (dash, DASH_PLACEHOLDER),
-        ],
-        key=lambda item: len(item[0]),
-        reverse=True
-    )
+# ---------------- DECODE ----------------
+def decode(code, dot, dash, sep):
+    code = code.replace(dot, '.').replace(dash, '-')
 
-    temp = code
-    for old, new in ordered_tokens:
-        temp = temp.replace(old, new)
-
-    temp = temp.replace(DOT_PLACEHOLDER, ".")
-    temp = temp.replace(DASH_PLACEHOLDER, "-")
-
-    words = temp.split(WORD_PLACEHOLDER)
-    decoded_words = []
+    words = code.split(sep * 3)
+    out = []
 
     for word in words:
-        letters = [x for x in word.split(LETTER_PLACEHOLDER) if x]
-        decoded_letters = []
+        letters = word.split(sep)
+        decoded = []
+        for l in letters:
+            if l in REVERSE:
+                decoded.append(REVERSE[l])
+        out.append("".join(decoded))
 
-        for letter in letters:
-            if letter in REVERSE_MORSE:
-                decoded_letters.append(REVERSE_MORSE[letter])
-            else:
-                raise ValueError(f"Invalid Morse pattern found: {letter}")
-
-        decoded_words.append("".join(decoded_letters))
-
-    return " ".join(decoded_words)
+    return " ".join(out)
 
 
+# ---------------- ARGPARSE ----------------
+def build_parser():
+    parser = argparse.ArgumentParser(prog="morsegen")
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    # encode subcommand
+    enc = subparsers.add_parser("encode", aliases=["ecd"])
+    enc.add_argument("text", nargs="+")
+
+    # decode subcommand
+    dec = subparsers.add_parser("decode", aliases=["dcd"])
+    dec.add_argument("text", nargs="+")
+
+    # shared args
+    for p in [parser, enc, dec]:
+        p.add_argument("--dot", "-t", default=".")
+        p.add_argument("--dash", "-h", default="-")
+        p.add_argument("--separator", "--sep", "-s", default=" ")
+
+    # flags mode
+    parser.add_argument("--decode", "-d", action="store_true")
+    parser.add_argument("--encode", "-e", action="store_true")
+
+    parser.add_argument("text", nargs="*")
+
+    return parser
+
+
+# ---------------- MAIN ----------------
 def main():
-    if len(sys.argv) < 2:
-        usage()
-        sys.exit(1)
+    parser = build_parser()
+    args = parser.parse_args()
 
-    mode = sys.argv[1]
-
-    DECODE_FLAGS = ["-d", "--decode"]
-    is_decode = mode in DECODE_FLAGS
+    dot = args.dot
+    dash = args.dash
+    sep = args.separator
 
     try:
-        dot, dash, space = prompt_symbols()
-
-        if is_decode:
-            if len(sys.argv) < 3:
-                raise ValueError("No Morse text provided for decoding.")
-
-            morse_input = " ".join(sys.argv[2:])
-            result = decode_text(morse_input, dot, dash, space)
-
-            print("\nDecoded Text:\n")
-            print(result)
-        else:
-            text = " ".join(sys.argv[1:])
-            result = encode_text(text, dot, dash, space)
-
-            print("\nEncoded Morse:\n")
-            print(result)
-
+        validate(dot, dash, sep)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
 
+    # --- subcommand mode ---
+    if args.command in ["encode", "ecd"]:
+        text = " ".join(args.text)
+        print(encode(text, dot, dash, sep))
+        return
+
+    if args.command in ["decode", "dcd"]:
+        text = " ".join(args.text)
+        print(decode(text, dot, dash, sep))
+        return
+
+    # --- flag mode ---
+    text = " ".join(args.text)
+
+    if args.decode:
+        print(decode(text, dot, dash, sep))
+    else:
+        # default = encode
+        print(encode(text, dot, dash, sep))
+
 
 if __name__ == "__main__":
     main()
+
