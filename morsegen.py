@@ -69,17 +69,19 @@ def decode(code, dot, dash, sep):
 
 # ---------------- ARGPARSE ----------------
 def build_parser():
-    parser = argparse.ArgumentParser(prog="morsegen")
+
+    parser.add_argument("--help", action="help", help="show this help message and exit")
+
+    parser = argparse.ArgumentParser(prog="morsegen", add_help=False)
 
     subparsers = parser.add_subparsers(dest="command")
 
-    # encode subcommand
-    enc = subparsers.add_parser("encode", aliases=["ecd"])
-    enc.add_argument("text", nargs="+")
 
-    # decode subcommand
-    dec = subparsers.add_parser("decode", aliases=["dcd"])
-    dec.add_argument("text", nargs="+")
+    enc = subparsers.add_parser("encode", aliases=["ecd"], add_help=False)
+    dec = subparsers.add_parser("decode", aliases=["dcd"], add_help=False)
+
+    enc.add_argument("--help", action="help", help="show this help message and exit")
+    dec.add_argument("--help", action="help", help="show this help message and exit")
 
     # shared args
     for p in [parser, enc, dec]:
