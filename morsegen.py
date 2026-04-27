@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 
 # Text to Morse Code Generator with custom symbols
 
