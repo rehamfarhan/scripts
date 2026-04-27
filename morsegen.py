@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-
-# Text to Morse Code Generator with custom symbols
+import sys
 
 MORSE = {
     'A': '.-',    'B': '-...',  'C': '-.-.',  'D': '-..',   'E': '.',
-    'F': '..-.',   'G': '--.',   'H': '....',  'I': '..',    'J': '.---',
-    'K': '-.-',    'L': '.-..',  'M': '--',    'N': '-.',    'O': '---',
-    'P': '.--.',   'Q': '--.-',  'R': '.-.',   'S': '...',   'T': '-',
-    'U': '..-',    'V': '...-',  'W': '.--',   'X': '-..-',  'Y': '-.--',
+    'F': '..-.',  'G': '--.',   'H': '....',  'I': '..',    'J': '.---',
+    'K': '-.-',   'L': '.-..',  'M': '--',    'N': '-.',    'O': '---',
+    'P': '.--.',  'Q': '--.-',  'R': '.-.',   'S': '...',   'T': '-',
+    'U': '..-',   'V': '...-',  'W': '.--',   'X': '-..-',  'Y': '-.--',
     'Z': '--..',
 
-    '0': '-----',  '1': '.----', '2': '..---', '3': '...--', '4': '....-',
-    '5': '.....',  '6': '-....', '7': '--...', '8': '---..', '9': '----.',
+    '0': '-----', '1': '.----', '2': '..---', '3': '...--', '4': '....-',
+    '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.',
 
     '.': '.-.-.-', ',': '--..--', '?': '..--..', "'": '.----.',
     '!': '-.-.--', '/': '-..-.',  '(': '-.--.',  ')': '-.--.-',
@@ -20,28 +19,31 @@ MORSE = {
     '$': '...-..-', '@': '.--.-.'
 }
 
-def to_morse(text, dot_symbol, dash_symbol, space_symbol):
+def to_morse(text, dot, dash, space):
     words = text.upper().split()
-    encoded_words = []
+    result_words = []
 
     for word in words:
-        encoded_letters = []
-        for char in word:
-            if char in MORSE:
-                morse = MORSE[char]
-                morse_custom = morse.replace('.', dot_symbol).replace('-', dash_symbol)
-                encoded_letters.append(morse_custom)
-        encoded_words.append(space_symbol.join(encoded_letters))
+        letters = []
+        for ch in word:
+            if ch in MORSE:
+                code = MORSE[ch]
+                code = code.replace('.', dot).replace('-', dash)
+                letters.append(code)
+        result_words.append(space.join(letters))
 
-    return (space_symbol * 3).join(encoded_words)
+    return (space * 3).join(result_words)
 
-# Input from user
-dot_symbol = input("What should the DOT character be? ")
-dash_symbol = input("What should the DASH character be? ")
-space_symbol = input("What should the SPACE character be? ")
+# --- CLI ARG HANDLING ---
+if len(sys.argv) < 2:
+    print("Usage: morsegen <text-to-encrypt>")
+    sys.exit(1)
 
-text = input("Enter text to convert: ")
+text = " ".join(sys.argv[1:])
 
-result = to_morse(text, dot_symbol, dash_symbol, space_symbol)
-print("\nEncrypted Morse:")
-print(result)
+dot = input("Dot symbol: ")
+dash = input("Dash symbol: ")
+space = input("Space symbol: ")
+
+print("\nEncrypted Morse:\n")
+print(to_morse(text, dot, dash, space))
