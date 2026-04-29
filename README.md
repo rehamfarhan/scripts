@@ -356,10 +356,3 @@ alias m="python3 money.py"
 ```
 
 ---
-
-# 🧠 Author
-
-Built by Reham Farhan
-Refined with obsessive attention to clarity, speed, and real-life usability.
-
----
