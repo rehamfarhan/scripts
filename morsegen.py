@@ -69,10 +69,8 @@ def decode(code, dot, dash, sep):
 
 # ---------------- ARGPARSE ----------------
 def build_parser():
-
-    parser.add_argument("--help", action="help", help="show this help message and exit")
-
     parser = argparse.ArgumentParser(prog="morsegen", add_help=False)
+    parser.add_argument("--help", action="help", help="show this help message and exit")
 
     subparsers = parser.add_subparsers(dest="command")
 

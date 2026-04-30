@@ -158,6 +158,14 @@ class MoneyStore:
                 return reservation
         return None
 
+    def delete_transaction(self, tx_id: str) -> bool:
+        txs = self.load_transactions()
+        new_txs = [t for t in txs if t.id != tx_id]
+        if len(new_txs) < len(txs):
+            self.save_transactions(new_txs)
+            return True
+        return False
+
     def _ensure_initialized(self) -> None:
         if not self.is_initialized():
             raise AppError("Repository not initialized. Run: money init")
