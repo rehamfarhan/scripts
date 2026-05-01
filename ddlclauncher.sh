@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # ========= CONFIG =========
-MODS_ROOT="${HOME}/DDLC Mods"
-LAUNCHER_DIR="${MODS_ROOT}/.launchers"
-DB_FILE="${LAUNCHER_DIR}/mod_database.txt"
+MODS_ROOT="$HOME/DDLC Mods"
+LAUNCHER_DIR="$MODS_ROOT/.launchers"
+DB_FILE="$LAUNCHER_DIR/mod_database.txt"
 
 # ========= DEP CHECK =========
 command -v fzf >/dev/null 2>&1 || {
@@ -13,6 +13,7 @@ command -v fzf >/dev/null 2>&1 || {
 }
 
 # ========= SETUP =========
+mkdir -p "$MODS_ROOT"
 mkdir -p "$LAUNCHER_DIR"
 touch "$DB_FILE"
 
@@ -65,21 +66,18 @@ create_launcher() {
     return
   fi
 
-  # Select executable
-  exe=$(printf "%s\n" "${EXES[@]}" | fzf --prompt="Select executable for $mod_name: ")
+  exe=$(printf "%s\n" "${EXES[@]}" | fzf --prompt="Select executable for $mod_name: " \
+    --height=20 --border)
   [ -z "$exe" ] && return
 
-  # Ask for launcher name
   read -rp "Enter launcher name: " lname
   [ -z "$lname" ] && return
 
-  # Sanitize filename
   safe_name="$(echo "$lname" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
   launcher_path="$LAUNCHER_DIR/$safe_name"
 
   emoji="$(get_random_emoji)"
 
-  # Create launcher script
   cat >"$launcher_path" <<EOF
 #!/usr/bin/env bash
 # NAME: $lname
@@ -99,7 +97,6 @@ EOF
 
   chmod +x "$launcher_path"
 
-  # Add to database
   echo "$mod_dir" >>"$DB_FILE"
 
   echo "Launcher created: $lname ($emoji)"
@@ -109,7 +106,6 @@ EOF
 for dir in */; do
   dir="${dir%/}"
 
-  # Skip launcher directory
   [ "$dir" = ".launchers" ] && continue
 
   [ -d "$dir" ] || continue
@@ -140,11 +136,10 @@ menu=$(build_menu)
   exit 1
 }
 
-# ========= UI =========
 IFS=$'\n' read -r -d '' -a out < <(
   printf '%s\n' "$menu" |
     fzf --prompt="Select DDLC Mod: " \
-      --delimiter=$'\t' \
+      --delimiter=$'	' \
       --with-nth=1,2 \
       --height=20 --border &&
     printf '\0'
@@ -155,5 +150,4 @@ IFS=$'\n' read -r -d '' -a out < <(
 sel_line="${out[0]}"
 launcher="${sel_line##*$'\t'}"
 
-# ========= RUN =========
 run_detached "$launcher"
