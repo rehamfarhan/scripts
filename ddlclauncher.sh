@@ -91,7 +91,25 @@ if [ ! -f "$exe" ]; then
   exit 1
 fi
 
-setsid "./$exe" >/dev/null 2>&1 &
+ext="${exe##*.}"
+
+case "$ext" in
+  sh)
+    cmd=( "./$exe" )
+    ;;
+  py)
+    cmd=( python "./$exe" )
+    ;;
+  exe)
+    cmd=( wine "./$exe" )
+    ;;
+  *)
+    echo "Unsupported file type: $exe"
+    exit 1
+    ;;
+esac
+
+setsid "${cmd[@]}" >/dev/null 2>&1 &
 disown || true
 EOF
 
