@@ -66,8 +66,7 @@ create_launcher() {
     return
   fi
 
-  exe=$(printf "%s\n" "${EXES[@]}" | fzf --prompt="Select executable for $mod_name: " \
-    --height=20 --border)
+  exe=$(printf "%s\n" "${EXES[@]}" | fzf --prompt="Select executable for $mod_name: " --height=20 --border)
   [ -z "$exe" ] && return
 
   read -rp "Enter launcher name: " lname
@@ -83,6 +82,7 @@ create_launcher() {
 # NAME: $lname
 # EMOJI: $emoji
 # TARGET: $exe
+# MODDIR: $mod_dir
 
 cd "$mod_dir" || exit 1
 
@@ -139,7 +139,8 @@ menu=$(build_menu)
 IFS=$'\n' read -r -d '' -a out < <(
   printf '%s\n' "$menu" |
     fzf --prompt="Select DDLC Mod: " \
-      --delimiter=$'	' \
+      --expect=tab,enter \
+      --delimiter=$'\t' \
       --with-nth=1,2 \
       --height=20 --border &&
     printf '\0'
@@ -147,7 +148,24 @@ IFS=$'\n' read -r -d '' -a out < <(
 
 [ ${#out[@]} -eq 0 ] && exit 0
 
-sel_line="${out[0]}"
+key="${out[0]}"
+sel_line="${out[1]:-}"
+[ -z "$sel_line" ] && exit 0
+
 launcher="${sel_line##*$'\t'}"
 
+# ========= DELETE MODE =========
+if [ "$key" = "tab" ]; then
+  mod_dir=$(grep '^# MODDIR:' "$launcher" | cut -d':' -f2- | xargs)
+
+  rm -f "$launcher"
+
+  # remove from DB
+  grep -Fxv "$mod_dir" "$DB_FILE" >"$DB_FILE.tmp" && mv "$DB_FILE.tmp" "$DB_FILE"
+
+  echo "Launcher removed."
+  exit 0
+fi
+
+# ========= RUN =========
 run_detached "$launcher"
