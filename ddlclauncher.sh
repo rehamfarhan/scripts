@@ -77,6 +77,9 @@ create_launcher() {
 
   emoji="$(get_random_emoji)"
 
+  # PRECOMPUTE EXTENSION
+  ext="${exe##*.}"
+
   cat >"$launcher_path" <<EOF
 #!/usr/bin/env bash
 # NAME: $lname
@@ -93,9 +96,9 @@ fi
 
 echo "Opening $lname @ $exe"
 
-ext="${exe##*.}"
+ext="$ext"
 
-case "$ext" in
+case "\$ext" in
   sh)
     cmd=( "./$exe" )
     ;;
@@ -111,7 +114,7 @@ case "$ext" in
     ;;
 esac
 
-setsid "${cmd[@]}" >/dev/null 2>&1 &
+setsid "\${cmd[@]}" >/dev/null 2>&1 &
 disown || true
 EOF
 
@@ -180,7 +183,6 @@ if [ "$key" = "tab" ]; then
 
   rm -f "$launcher"
 
-  # remove from DB
   grep -Fxv "$mod_dir" "$DB_FILE" >"$DB_FILE.tmp" && mv "$DB_FILE.tmp" "$DB_FILE"
 
   echo "Launcher removed."
