@@ -91,6 +91,8 @@ if [ ! -f "$exe" ]; then
   exit 1
 fi
 
+echo "Opening $lname @ $exe"
+
 ext="${exe##*.}"
 
 case "$ext" in
