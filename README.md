@@ -7,8 +7,10 @@ A collection of utility scripts for various tasks, tracked with Git and linked s
 - [💰 Money Git CLI (money.py)](#-money-git-cli-moneypy)
 - [📡 Morse Generator (morsegen.py)](#-morse-generator-morsegenpy)
 - [🎮 Game Launcher (run.sh)](#-game-launcher-runsh)
+- [💔 DDLC Mod Launcher (ddlclauncher.sh)](#-ddlc-mod-launcher-ddlclaunchersh)
 - [📥 YouTube Downloader (yt.sh)](#-youtube-downloader-ytsh)
 - [📊 Waybar Restarter (barr.sh)](#-waybar-restarter-barrsh)
+- [🚀 Rofi Entry Creator (mkrofi.sh)](#-rofi-entry-creator-mkrofish)
 - [🔗 Script Linker (scrlink.sh)](#-script-linker-scrlinksh)
 
 ---
@@ -83,6 +85,23 @@ An interactive game launcher using `fzf`.
 
 ---
 
+## 💔 DDLC Mod Launcher (`ddlclauncher.sh`)
+
+A specialized interactive manager for Doki Doki Literature Club mods.
+
+### Features
+- **Mod Detection**: Automatically scans `~/DDLC Mods` for new folders.
+- **Auto-Config**: Helps create persistent launchers for Shell scripts, Python files, or Windows EXEs (via Wine).
+- **Interactive Menu**: Uses `fzf` with randomized thematic emojis for a polished feel.
+- **Management**: Quickly delete launchers by pressing `TAB` in the selection menu.
+
+### Usage
+```bash
+./ddlclauncher.sh
+```
+
+---
+
 ## 📥 YouTube Downloader (`yt.sh`)
 
 A convenient wrapper for `yt-dlp` with sensible defaults.
@@ -108,6 +127,21 @@ A simple script to cleanly restart Waybar. Useful after configuration changes.
 ### Usage
 ```bash
 ./barr.sh
+```
+
+---
+
+## 🚀 Rofi Entry Creator (`mkrofi.sh`)
+
+Quickly generate `.desktop` files to make your custom scripts searchable in application launchers like Rofi.
+
+### Features
+- **Guided Setup**: Prompts for name, command, icon, and terminal status.
+- **Standard Compliant**: Creates entries in `~/.local/share/applications`.
+
+### Usage
+```bash
+./mkrofi.sh
 ```
 
 ---

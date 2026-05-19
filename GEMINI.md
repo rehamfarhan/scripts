@@ -3,6 +3,8 @@
 ## Project Overview
 This repository is a curated collection of custom utility scripts used for system management, productivity, and entertainment. The scripts are primarily written in **Bash** and **Python** and are designed to be symlinked to `/usr/local/bin` for system-wide execution.
 
+The **primary purpose of the Gemini CLI agent** in this repository is to identify newly added scripts, analyze their functionality, and ensure they are properly documented in the `README.md` with appropriate features and usage examples.
+
 The project emphasizes terminal-centric workflows, speed, and minimal dependencies (primarily relying on common tools like `fzf`, `yt-dlp`, and `aria2c`).
 
 ## Building and Running
