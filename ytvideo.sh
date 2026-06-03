@@ -3,7 +3,7 @@
 # Exit immediately if any command fails or a pipeline breaks
 set -eo pipefail
 
-# Check for required system dependencies
+# Check for required system dependencies before running
 for cmd in yt-dlp aria2c ffmpeg; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "Error: Required dependency '$cmd' is not installed." >&2
@@ -11,7 +11,7 @@ for cmd in yt-dlp aria2c ffmpeg; do
   fi
 done
 
-# Default values
+# Default video resolution configurations
 format="bv*[height=1080]+ba/best[height<=1080]"
 output="%(title)s.%(ext)s"
 
@@ -26,13 +26,19 @@ extra_flags=(
   --downloader-args "aria2c:-x 16 -s 16"
 )
 
-# Parse configuration flags
+# Parse configuration modifiers
 while [[ "$1" == --* ]]; do
   case "$1" in
   --mp3)
-    # --extract-audio will discard the subtitle track automatically for audio files
-    # Mutates thumbnail embedding slightly to comply with audio metadata containers
-    extra_flags+=(--extract-audio --audio-format mp3 --audio-quality 0 --embed-metadata)
+    # 1. Extracts high-quality audio track and discards subtitles.
+    # 2. Crops sidebars from 16:9 thumbnails to form a native square album cover.
+    extra_flags+=(
+      --extract-audio
+      --audio-format mp3
+      --audio-quality 0
+      --embed-metadata
+      --ppa "ThumbnailsConvertor:-vf crop=ih:ih"
+    )
     ;;
   --best)
     format="bestvideo+bestaudio/best"
@@ -51,11 +57,11 @@ while [[ "$1" == --* ]]; do
   shift
 done
 
-# URL verification check
+# URL verification check (Ensures at least one target is provided)
 if [[ $# -eq 0 ]]; then
   echo "Usage: $(basename "$0") [--mp3] [--720|--1080|--best] <url1> [url2 ...]" >&2
   exit 1
 fi
 
-# Run the download for all provided URLs
+# Fire the downloader for all provided URLs (supports single videos, lists, or spaces)
 yt-dlp -f "$format" -o "$output" "${extra_flags[@]}" "$@"
