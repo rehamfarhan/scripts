@@ -15,13 +15,16 @@ done
 format="bv*[height=1080]+ba/best[height<=1080]"
 output="%(title)s.%(ext)s"
 
-# Base configuration flags (Thumbnails, English Subtitles, and Fast Downloader)
+# Base configuration flags (Thumbnails, Subs, Fast Downloader + H.265 Recode)
 extra_flags=(
   --embed-thumbnail
   --convert-thumbnails png
   --write-subs
+  --write-auto-subs
   --sub-langs "en.*"
   --embed-subs
+  --recode-video mkv
+  --postprocessor-args "ffmpeg:-c:v libx265 -vtag hvc1 -c:a copy"
   --downloader aria2c
   --downloader-args "aria2c:-x 16 -s 16"
 )
@@ -32,7 +35,12 @@ while [[ "$1" == --* ]]; do
   --mp3)
     # 1. Extracts high-quality audio track and discards subtitles.
     # 2. Crops sidebars from 16:9 thumbnails to form a native square album cover.
-    extra_flags+=(
+    # 3. Bypasses the H.265 video recode processing array.
+    extra_flags=(
+      --embed-thumbnail
+      --convert-thumbnails png
+      --downloader aria2c
+      --downloader-args "aria2c:-x 16 -s 16"
       --extract-audio
       --audio-format mp3
       --audio-quality 0
@@ -63,5 +71,5 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
-# Fire the downloader for all provided URLs (supports single videos, lists, or spaces)
+# Fire the downloader for all provided URLs
 yt-dlp -f "$format" -o "$output" "${extra_flags[@]}" "$@"
