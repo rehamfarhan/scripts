@@ -135,7 +135,6 @@ video)
     --embed-subs
 
     --recode-video mkv
-    --postprocessor-args "ffmpeg:-c:v libx265 -vtag hvc1 -c:a copy"
   )
 
   ;;
