@@ -1,75 +1,213 @@
 #!/usr/bin/env bash
 
-# Exit immediately if any command fails or a pipeline breaks
-set -eo pipefail
+set -euo pipefail
 
-# Check for required system dependencies before running
-for cmd in yt-dlp aria2c ffmpeg; do
-  if ! command -v "$cmd" &>/dev/null; then
-    echo "Error: Required dependency '$cmd' is not installed." >&2
+################################################################################
+# ytvideo
+#
+# Profiles:
+#   video   - 1080p H.265 MKV with subtitles
+#   music   - High quality MP3 with album art
+#   podcast - Audio-focused Opus download
+#   archive - Maximum preservation quality
+#
+# Usage:
+#   ytvideo.sh URL
+#   ytvideo.sh video URL
+#   ytvideo.sh music URL
+#   ytvideo.sh podcast URL
+#   ytvideo.sh archive URL
+#   ytvideo.sh --list URL
+################################################################################
+
+DEPENDENCIES=(
+  yt-dlp
+  aria2c
+  ffmpeg
+)
+
+for cmd in "${DEPENDENCIES[@]}"; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo
+    echo "Error: Missing dependency: $cmd"
+    echo
+
+    case "$cmd" in
+    ffmpeg)
+      echo "Arch:          sudo pacman -S ffmpeg"
+      echo "Debian/Ubuntu: sudo apt install ffmpeg"
+      ;;
+    yt-dlp)
+      echo "Arch:          sudo pacman -S yt-dlp"
+      echo "Debian/Ubuntu: sudo apt install yt-dlp"
+      ;;
+    aria2c)
+      echo "Arch:          sudo pacman -S aria2"
+      echo "Debian/Ubuntu: sudo apt install aria2"
+      ;;
+    esac
+
     exit 1
   fi
 done
 
-# Default video resolution configurations
-format="bv*[height=1080]+ba/best[height<=1080]"
-output="%(title)s.%(ext)s"
+################################################################################
+# Configuration
+################################################################################
 
-# Base configuration flags (Thumbnails, Subs, Fast Downloader + H.265 Recode)
-extra_flags=(
-  --embed-thumbnail
-  --convert-thumbnails png
-  --write-subs
-  --write-auto-subs
-  --sub-langs "en.*"
-  --embed-subs
-  --recode-video mkv
-  --postprocessor-args "ffmpeg:-c:v libx265 -vtag hvc1 -c:a copy"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ytvideo"
+ARCHIVE_FILE="$CACHE_DIR/archive.txt"
+
+mkdir -p "$CACHE_DIR"
+
+OUTPUT="%(title)s [%(id)s].%(ext)s"
+
+COMMON_FLAGS=(
+  --newline
+  --download-archive "$ARCHIVE_FILE"
+
   --downloader aria2c
-  --downloader-args "aria2c:-x 16 -s 16"
+  --downloader-args "aria2c:-x 8 -s 8"
 )
 
-# Parse configuration modifiers
-while [[ "$1" == --* ]]; do
-  case "$1" in
-  --mp3)
-    # 1. Extracts high-quality audio track and discards subtitles.
-    # 2. Crops sidebars from 16:9 thumbnails to form a native square album cover.
-    # 3. Bypasses the H.265 video recode processing array.
-    extra_flags=(
-      --embed-thumbnail
-      --convert-thumbnails png
-      --downloader aria2c
-      --downloader-args "aria2c:-x 16 -s 16"
-      --extract-audio
-      --audio-format mp3
-      --audio-quality 0
-      --embed-metadata
-      --ppa "ThumbnailsConvertor:-vf crop=ih:ih"
-    )
-    ;;
-  --best)
-    format="bestvideo+bestaudio/best"
-    ;;
-  --720)
-    format="bv*[height=720]+ba/best[height<=720]"
-    ;;
-  --1080)
-    format="bv*[height=1080]+ba/best[height<=1080]"
-    ;;
-  *)
-    echo "Unknown flag: $1" >&2
-    exit 1
-    ;;
-  esac
-  shift
-done
+################################################################################
+# Parse arguments
+################################################################################
 
-# URL verification check (Ensures at least one target is provided)
+PROFILE="video"
+
+case "${1:-}" in
+video | music | podcast | archive)
+  PROFILE="$1"
+  shift
+  ;;
+--list)
+  shift
+
+  if [[ $# -eq 0 ]]; then
+    echo "Usage: $(basename "$0") --list <url>"
+    exit 1
+  fi
+
+  yt-dlp -F "$1"
+  exit 0
+  ;;
+esac
+
 if [[ $# -eq 0 ]]; then
-  echo "Usage: $(basename "$0") [--mp3] [--720|--1080|--best] <url1> [url2 ...]" >&2
+  cat <<EOF
+Usage:
+  $(basename "$0") URL
+  $(basename "$0") video URL
+  $(basename "$0") music URL
+  $(basename "$0") podcast URL
+  $(basename "$0") archive URL
+  $(basename "$0") --list URL
+
+Profiles:
+
+  video    1080p H.265 MKV with subtitles
+  music    High quality MP3 with album artwork
+  podcast  Audio-only Opus
+  archive  Maximum quality preservation
+
+EOF
   exit 1
 fi
 
-# Fire the downloader for all provided URLs
-yt-dlp -f "$format" -o "$output" "${extra_flags[@]}" "$@"
+################################################################################
+# Profile Definitions
+################################################################################
+
+case "$PROFILE" in
+
+video)
+
+  FORMAT="bv*[height=1080]+ba/best[height<=1080]"
+
+  PROFILE_FLAGS=(
+    --embed-thumbnail
+    --convert-thumbnails png
+
+    --write-subs
+    --write-auto-subs
+    --sub-langs "en.*"
+    --embed-subs
+
+    --recode-video mkv
+    --postprocessor-args "ffmpeg:-c:v libx265 -vtag hvc1 -c:a copy"
+  )
+
+  ;;
+
+music)
+
+  FORMAT="bestaudio"
+
+  PROFILE_FLAGS=(
+    --extract-audio
+    --audio-format mp3
+    --audio-quality 0
+
+    --embed-thumbnail
+    --convert-thumbnails png
+    --embed-metadata
+
+    --ppa "ThumbnailsConvertor:-vf crop=ih:ih"
+  )
+
+  ;;
+
+podcast)
+
+  FORMAT="bestaudio"
+
+  PROFILE_FLAGS=(
+    --extract-audio
+    --audio-format opus
+
+    --embed-thumbnail
+    --embed-metadata
+  )
+
+  ;;
+
+archive)
+
+  FORMAT="bv*+ba/b"
+
+  PROFILE_FLAGS=(
+    --embed-thumbnail
+
+    --write-subs
+    --write-auto-subs
+    --sub-langs all
+    --embed-subs
+  )
+
+  ;;
+
+*)
+
+  echo "Unknown profile: $PROFILE"
+  exit 1
+
+  ;;
+
+esac
+
+################################################################################
+# Download
+################################################################################
+
+echo
+echo "Profile : $PROFILE"
+echo "Targets : $#"
+echo
+
+yt-dlp \
+  -f "$FORMAT" \
+  -o "$OUTPUT" \
+  "${COMMON_FLAGS[@]}" \
+  "${PROFILE_FLAGS[@]}" \
+  "$@"
