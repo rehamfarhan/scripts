@@ -1,6 +1,6 @@
 # 🛠️ Custom Scripts Collection
 
-A collection of utility scripts for various tasks, tracked with Git and linked system-wide for easy access.
+A curated collection of custom utility scripts used for system management, productivity, and entertainment, tracked with Git and symlinked system-wide for easy access.
 
 ## 📖 Table of Contents
 - [🚀 Setup & Installation](#-setup--installation)
@@ -8,7 +8,7 @@ A collection of utility scripts for various tasks, tracked with Git and linked s
 - [📡 Morse Generator (morsegen.py)](#-morse-generator-morsegenpy)
 - [🎮 Game Launcher (run.sh)](#-game-launcher-runsh)
 - [💔 DDLC Mod Launcher (ddlclauncher.sh)](#-ddlc-mod-launcher-ddlclaunchersh)
-- [📥 YouTube Downloader (yt.sh)](#-youtube-downloader-ytsh)
+- [📥 YouTube Downloader (ytvideo.sh)](#-youtube-downloader-ytvideosh)
 - [📊 Waybar Restarter (barr.sh)](#-waybar-restarter-barrsh)
 - [🚀 Rofi Entry Creator (mkrofi.sh)](#-rofi-entry-creator-mkrofish)
 - [🔗 Script Linker (scrlink.sh)](#-script-linker-scrlinksh)
@@ -17,112 +17,152 @@ A collection of utility scripts for various tasks, tracked with Git and linked s
 
 ## 🚀 Setup & Installation
 
-These scripts are intended to be stored in `~/scripts` and linked to `/usr/local/bin` using the included `scrlink.sh` utility.
+These scripts are intended to be stored locally and symlinked to `/usr/local/bin` using the included `scrlink.sh` utility for system-wide execution.
 
 ```bash
 # Example: Link money.py to /usr/local/bin/money
-./scrlink.sh money.py money
+sudo ./scrlink.sh money.py money
 ```
 
 ---
 
 ## 💰 Money Git CLI (`money.py`)
 
-A **Git-inspired terminal app** to track your money with speed, clarity, and discipline.
+A **Git-inspired terminal ledger** to track your finances with speed, clarity, and discipline. It stores data locally in a hidden `.moneygit/` folder.
 
 ### Features
-- **Lightning-Fast**: Log transactions with shorthand like `money +500 Salary` or `money -90 Burger @cafe`.
-- **Reservation System**: Mentally "lock" money for specific purposes (e.g., `money reserve 1200 Rent`).
-- **Status Overview**: Check your total, reserved, and available balance with `money status`.
-- **Search & Log**: View history with `money log` or search specific entries with `money search query`.
-- **Undo/Delete**: Easily correct mistakes with `money undo` or `money delete <id>`.
+- **Shorthand Quick Entry**: Record transactions instantly with syntax like `money +500 Salary` or `money -90 Burger @cafe` (use `@` to separate optional notes from the source).
+- **Reservation System**: Mentally lock/reserve funds (e.g., for rent, bills) to see your actual available balance.
+- **Detailed Log**: View complete transaction history in a cleanly formatted ASCII table.
+- **Search & Filter**: Search transactions by source, action, timestamp, or notes.
+- **Undo & Delete**: Quickly remove the last transaction using `undo` or delete specific transactions via ID prefixes.
 
-### Usage
+### Command Reference
 ```bash
-money init          # Initialize a new ledger
-money +1000 Salary  # Record income
-money -50 Coffee    # Record expense
-money status        # Show balance summary
+money init                                     # Initialize a new ledger in the current directory
+money status                                   # View total, reserved, and available balance
+money balance                                  # Print current total balance value only
+money log                                      # Display history of all transactions
+money commit --source <src> --action <act> ... # Record transaction with specific flags
+money commit "<source>, <action>, <amount>"    # Record transaction with legacy comma-separated text
+money reserve <amount> <identifier>            # Lock funds under a specific label
+money reserves                                 # List all active reservations
+money settle <identifier>                      # Settle a reservation (converts to spend transaction)
+money delete <id_prefix>                       # Delete transaction matching ID prefix
+money undo                                     # Remove the last recorded transaction
+money search <query>                           # Search ledger history
+money config --currency <USD/BDT/etc>          # Configure display currency
+```
+
+### Quick Entry Usage Examples
+```bash
+money +1500 Freelance Pay       # Records BDT 1500 income
+money -25 Coffee @coffeebar     # Records BDT 25 expense with note "coffeebar"
+money reserve 1200 Rent         # Reserves BDT 1200 for Rent
+money settle Rent               # Settles the reserve and logs BDT 1200 expense
 ```
 
 ---
 
 ## 📡 Morse Generator (`morsegen.py`)
 
-A flexible Morse code encoder and decoder.
+A flexible, bi-directional Morse code encoder and decoder supporting custom symbols and distinct characters validation.
 
 ### Features
-- **Custom Symbols**: Define your own symbols for dots, dashes, and separators.
-- **Bi-directional**: Easily switch between encoding text and decoding Morse.
+- **Subcommand & Flag Modes**: Use either descriptive subcommands or quick flags.
+- **Bi-directional**: Easily convert plain text to Morse code or decode Morse code back to text.
+- **Custom Symbols**: Configure custom characters for dots, dashes, and separators.
+- **Distinct Characters Validation**: Ensures the dot, dash, and separator symbols are distinct and do not overlap.
 
 ### Usage
 ```bash
-# Encode text
+# Encode text (using subcommand)
 python3 morsegen.py encode "HELLO WORLD"
 
-# Decode Morse
-python3 morsegen.py decode ".... . .-.. .-.. --- / .-- --- .-. .-.. -.."
+# Decode Morse code (using flags)
+python3 morsegen.py -d ".... . .-.. .-.. --- / .-- --- .-. .-.. -.."
 
-# Custom symbols
-python3 morsegen.py encode "HELLO" --dot "." --dash "_" --separator "/"
+# Encode text using custom symbols
+python3 morsegen.py encode "HELLO" --dot "." --dash "_" --sep "/"
 ```
 
 ---
 
 ## 🎮 Game Launcher (`run.sh`)
 
-An interactive game launcher using `fzf`.
+An interactive game launcher utilizing `fzf` to browse, launch, and manage native games.
 
 ### Features
-- **Interactive Menu**: Quickly find and launch games from your Games directory.
-- **Ignore List**: Press `TAB` to add executables to a `.runignore` file.
-- **Compatibility**: Includes fixes for Wayland/X11 environment variables.
+- **Interactive Search Menu**: Quickly browse and launch games inside your Games directory.
+- **Ignore list support**: Press `TAB` to add any executable to a local `.runignore` file, hiding it from future launcher lists.
+- **Automatic Compat/Wayland Fixes**: Detects if game requires custom wrappers. If a script starts with `# ICON: 💻`, it runs directly; otherwise, it forces X11 mode (`SDL_VIDEODRIVER=x11`) to ensure game engine compatibility on Wayland.
 
 ### Usage
 ```bash
-./run.sh [path/to/games]
+# Launch interactive menu (defaults to ~/Games)
+./run.sh
+
+# Specifying custom games directory
+./run.sh /path/to/my/games
 ```
 
 ---
 
 ## 💔 DDLC Mod Launcher (`ddlclauncher.sh`)
 
-A specialized interactive manager for Doki Doki Literature Club mods.
+A thematic interactive manager for Doki Doki Literature Club mods, offering easy launcher creation and execution.
 
 ### Features
-- **Mod Detection**: Automatically scans `~/DDLC Mods` for new folders.
-- **Auto-Config**: Helps create persistent launchers for Shell scripts, Python files, or Windows EXEs (via Wine).
-- **Interactive Menu**: Uses `fzf` with randomized thematic emojis for a polished feel.
-- **Management**: Quickly delete launchers by pressing `TAB` in the selection menu.
+- **Mod Directory Scanning**: Automatically scans `~/DDLC Mods` for directories and identifies executable entry points (`.sh`, `.py`, `.exe` via Wine).
+- **Auto-Generated Launchers**: Walks you through creating a permanent launcher config stored under `.launchers/`.
+- **Polish UI**: Uses `fzf` with randomized thematic emojis (💔, 🩸, 🧠, 🌸, etc.) matching the DDLC aesthetic.
+- **Mod Management**: Press `TAB` within the selection menu to instantly delete a mod launcher configuration.
 
 ### Usage
 ```bash
+# Run scanning & interactive mod selection menu
 ./ddlclauncher.sh
 ```
 
 ---
 
-## 📥 YouTube Downloader (`yt.sh`)
+## 📥 YouTube Downloader (`ytvideo.sh`)
 
-A convenient wrapper for `yt-dlp` with sensible defaults.
+A robust, high-performance wrapper for `yt-dlp` configured with sensible defaults and multi-threaded downloading.
 
 ### Features
-- **Fast Downloads**: Uses `aria2c` for multi-threaded downloads.
-- **Format Presets**: Flags for 720p, 1080p, and "best" quality.
-- **Audio Mode**: Extract MP3s directly with `--mp3`.
-- **Subtitles**: Embed English subtitles with `--subs`.
+- **High-Speed Downloads**: Uses `aria2c` under the hood with 8 split connections for maximum bandwidth usage.
+- **Smart Profiles**:
+  - `video` (Default): Downloads 1080p H.265 MKV video, embeds the PNG thumbnail, and merges English subtitles.
+  - `music`: Extracts high-quality MP3 (quality level 0), crops album artwork to a square format, and embeds full metadata.
+  - `podcast`: Extracts audio-only Opus format, embeds metadata and thumbnail.
+  - `archive`: Downloads the maximum quality available and embeds all subtitles.
+- **Format Selection Helper**: Use the `--list` command to quickly inspect all available formats for a video.
+- **Duplicate Prevention**: Maintains a download archive at `~/.cache/ytvideo/archive.txt` to skip already-downloaded videos.
 
 ### Usage
 ```bash
-yt --mp3 <url>
-yt --1080 --subs <url>
+# Download a video in 1080p (default video profile)
+./ytvideo.sh "https://www.youtube.com/watch?v=..."
+
+# Download high-quality audio / music
+./ytvideo.sh music "https://www.youtube.com/watch?v=..."
+
+# Download podcast (Opus audio format)
+./ytvideo.sh podcast "https://www.youtube.com/watch?v=..."
+
+# Download maximum quality video with all subtitles
+./ytvideo.sh archive "https://www.youtube.com/watch?v=..."
+
+# List formats only
+./ytvideo.sh --list "https://www.youtube.com/watch?v=..."
 ```
 
 ---
 
 ## 📊 Waybar Restarter (`barr.sh`)
 
-A simple script to cleanly restart Waybar. Useful after configuration changes.
+A simple helper script to cleanly terminate and restart Waybar. Ideal for applying Wayland configuration changes.
 
 ### Usage
 ```bash
@@ -133,11 +173,11 @@ A simple script to cleanly restart Waybar. Useful after configuration changes.
 
 ## 🚀 Rofi Entry Creator (`mkrofi.sh`)
 
-Quickly generate `.desktop` files to make your custom scripts searchable in application launchers like Rofi.
+Quickly generate compliant desktop launcher configuration files (`.desktop`) to make custom terminal commands searchable in application menus.
 
 ### Features
-- **Guided Setup**: Prompts for name, command, icon, and terminal status.
-- **Standard Compliant**: Creates entries in `~/.local/share/applications`.
+- **Guided Configuration**: Prompts you for App Name, command paths, icon choices, categories, and terminal execution preference.
+- **Standard Compliant**: Automatically registers the entry in `~/.local/share/applications/` and marks it executable.
 
 ### Usage
 ```bash
@@ -148,15 +188,18 @@ Quickly generate `.desktop` files to make your custom scripts searchable in appl
 
 ## 🔗 Script Linker (`scrlink.sh`)
 
-Utility to symlink scripts from this repository to `/usr/local/bin`.
+Utility tool to easily symlink any script in this collection to `/usr/local/bin` for system-wide command access.
 
 ### Usage
 ```bash
-sudo ./scrlink.sh <script_name> <target_name>
+sudo ./scrlink.sh <script_file> <target_command_name>
+
+# Example: Link ytvideo.sh as 'ytvideo'
+sudo ./scrlink.sh ytvideo.sh ytvideo
 ```
 
 ---
 
 ## 🛠️ Contribution & Maintenance
 
-I use Git to track changes in this repository. All scripts are maintained for personal efficiency and system-wide accessibility.
+All scripts are tracked via Git. They are maintained to optimize personal productivity, system workflows, and terminal-centric gaming environments.
