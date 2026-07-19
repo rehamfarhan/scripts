@@ -18,7 +18,6 @@ mkdir -p "$(dirname -- "$IGNORE_FILE")"
 touch "$IGNORE_FILE"
 
 # Background vs Foreground logic
-run_foreground() { exec "$@"; }
 run_detached() {
   setsid "$@" >/dev/null 2>&1 &
   disown || true
@@ -26,41 +25,55 @@ run_detached() {
 }
 
 generate_list() {
-  # Find native executables while ignoring raw .exe files
-  find . -maxdepth 3 -type f -executable -not -name "*.exe" -printf '%P\n' 2>/dev/null || true
+  # Find native executables, ignoring common library/data directories and git
+  find . -maxdepth 3 \
+    -not \( -path '*/lib/*' -o -path '*/lib64/*' -o -path '*/share/*' -o -path '*/.git/*' \) \
+    -type f -executable -not -name "*.exe" -printf '%P\n' 2>/dev/null || true
 }
 
 build_menu() {
-  mapfile -t _ign <"$IGNORE_FILE"
+  # Load ignored files into an associative array for O(1) lookups
+  declare -A ignores
+  if [ -f "$IGNORE_FILE" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && ignores["$line"]=1
+    done < "$IGNORE_FILE"
+  fi
+
   generate_list | sort -u | while IFS= read -r rel; do
     [ -z "$rel" ] || [ "$rel" = "." ] && continue
-
-    # Respect .runignore
-    skip=false
-    for ig in "${_ign[@]}"; do
-      [ "$ig" = "$rel" ] && {
-        skip=true
-        break
-      }
-    done
-    $skip && continue
+    [[ -v ignores["$rel"] ]] && continue
 
     local filename="${rel##*/}"
-
-    # Peek at header for metadata icons
     local icon="🐧"
-    if head -n 5 "$rel" 2>/dev/null | grep -q "# ICON: 💻"; then
-      icon="💻"
-    elif head -n 5 "$rel" 2>/dev/null | grep -q "# ICON: 🐧"; then
-      icon="🐧"
+
+    # Peek at first 2 bytes to check if it's a script before reading lines
+    if [ -f "$rel" ] && [ -r "$rel" ]; then
+      local magic
+      read -r -N 2 magic < "$rel" 2>/dev/null || true
+      if [ "${magic:-}" = "#!" ]; then
+        local line line_count=0
+        while IFS= read -r line && [ $line_count -lt 5 ]; do
+          if [[ "$line" == *"# ICON: 💻"* ]]; then
+            icon="💻"
+            break
+          elif [[ "$line" == *"# ICON: 🐧"* ]]; then
+            icon="🐧"
+            break
+          fi
+          ((line_count++))
+        done < "$rel" 2>/dev/null
+      fi
     fi
 
     printf '%s\t%s\t%s\n' "$icon" "$filename" "$rel"
   done
 }
 
+# Build the menu once and cache it in memory
+menu=$(build_menu)
+
 while true; do
-  menu=$(build_menu)
   [ -z "$menu" ] && {
     echo "No games found."
     exit 1
@@ -78,7 +91,7 @@ while true; do
 
   key="${out[0]}"
   sel_line="${out[1]:-}"
-  [ -z "$sel_line" ] && continue
+  [ -z "$sel_line" ] && exit 0
 
   relpath="${sel_line##*$'\t'}"
   sel_icon="${sel_line%%$'\t'*}"
@@ -88,6 +101,8 @@ while true; do
     if ! grep -Fxq -- "$relpath" "$IGNORE_FILE"; then
       printf '%s\n' "$relpath" >>"$IGNORE_FILE"
     fi
+    # Remove the selected item from the menu variable dynamically
+    menu="$(printf '%s\n' "$menu" | grep -v -F "$sel_line" || true)"
     continue
   fi
 
