@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ################################################################################
-# ytvideo
+# mediafetch (mf)
 #
 # Profiles:
 #   video   - 1080p H.265 MKV with subtitles
@@ -12,12 +12,12 @@ set -euo pipefail
 #   archive - Maximum preservation quality
 #
 # Usage:
-#   ytvideo.sh URL
-#   ytvideo.sh video URL
-#   ytvideo.sh music URL
-#   ytvideo.sh podcast URL
-#   ytvideo.sh archive URL
-#   ytvideo.sh --list URL
+#   mf URL
+#   mf video URL
+#   mf music URL
+#   mf podcast URL
+#   mf archive URL
+#   mf --list URL
 ################################################################################
 
 DEPENDENCIES=(
@@ -55,7 +55,7 @@ done
 # Configuration
 ################################################################################
 
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ytvideo"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/mediafetch"
 ARCHIVE_FILE="$CACHE_DIR/archive.txt"
 
 mkdir -p "$CACHE_DIR"

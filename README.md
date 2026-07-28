@@ -11,7 +11,7 @@ Each utility is organized into its own standalone directory containing the execu
 | Script / Folder | Command | Language | Description |
 | :--- | :--- | :--- | :--- |
 | [**`money/`**](money/) | `money` | Python 3 | Git-inspired terminal financial ledger with quick entry syntax, reservation system, and ASCII logging. |
-| [**`ytvideo/`**](ytvideo/) | `ytvideo` | Bash | High-speed multi-threaded media downloader wrapper around `yt-dlp` & `aria2c` with presets for video, music, and podcasts. |
+| [**`mediafetch/`**](mediafetch/) | `mf` | Bash | High-speed multi-threaded media downloader wrapper around `yt-dlp` & `aria2c` with presets for video, music, and podcasts. |
 | [**`run/`**](run/) | `run` | Bash | Interactive `fzf` launcher for native Linux games with `.runignore` management and automatic Wayland/X11 wrappers. |
 | [**`ddlclauncher/`**](ddlclauncher/) | `ddlclauncher` | Bash | Interactive DDLC mod manager featuring thematic `fzf` UI, automatic scanner, launcher creator, and executable detection. |
 | [**`morsegen/`**](morsegen/) | `morsegen` | Python 3 | Bi-directional Morse code encoder and decoder with custom symbol support and distinct character validation. |
@@ -35,7 +35,7 @@ scrlink
 
 # 3. Or symlink a specific script directly:
 scrlink money
-scrlink ytvideo
+scrlink mediafetch mf
 ```
 
 ---
