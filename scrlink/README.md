@@ -23,6 +23,7 @@ An intelligent helper script to package, organize, and symlink repository script
   4. Registers the symlink in `/usr/local/bin/myscript`.
 - **Smart Target Defaults**: Automatically defaults target command name to the script's basename without extension if omitted (e.g., `money.py` $\rightarrow$ `money`).
 - **Flexible Path Resolution**: Resolves paths whether specified by relative script path (`money/money.py`), bare filename (`money.py`), or directory name (`money`).
+- **Resilient Fallback**: If creating the subfolder or moving the script fails for any reason, `scrlink` warns gracefully and still registers the `/usr/local/bin` symlink for the script at its current location.
 
 ---
 

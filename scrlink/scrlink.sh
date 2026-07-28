@@ -4,7 +4,7 @@ set -euo pipefail
 # Script Linker (scrlink)
 # Symlinks repository scripts to /usr/local/bin for system-wide execution.
 
-SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPTS_DIR="/home/directpass/scripts"
 BIN_DIR="/usr/local/bin"
 
 # Help message
@@ -64,20 +64,28 @@ elif [ -f "$SCRIPTS_DIR/$SOURCE" ]; then
   DIRNAME="${BASENAME%.*}"
   NEW_DIR="$SCRIPTS_DIR/$DIRNAME"
 
-  echo "📦 Migration detected: Moving '$BASENAME' into standalone directory '$DIRNAME/'..."
-  mkdir -p "$NEW_DIR"
+  echo "📦 Migration detected: Attempting to move '$BASENAME' into standalone directory '$DIRNAME/'..."
+  
+  MOVED=0
+  if mkdir -p "$NEW_DIR" 2>/dev/null; then
+    TARGET_FILE="$NEW_DIR/$BASENAME"
+    if command -v git >/dev/null 2>&1 && git ls-files --error-unmatch "$SCRIPT_FILE" >/dev/null 2>&1; then
+      if git mv "$SCRIPT_FILE" "$TARGET_FILE" 2>/dev/null; then
+        MOVED=1
+      fi
+    fi
 
-  TARGET_FILE="$NEW_DIR/$BASENAME"
-  if command -v git >/dev/null 2>&1 && git ls-files --error-unmatch "$SCRIPT_FILE" >/dev/null 2>&1; then
-    git mv "$SCRIPT_FILE" "$TARGET_FILE"
-  else
-    mv "$SCRIPT_FILE" "$TARGET_FILE"
-  fi
+    if [ $MOVED -eq 0 ]; then
+      if mv "$SCRIPT_FILE" "$TARGET_FILE" 2>/dev/null; then
+        MOVED=1
+      fi
+    fi
 
-  # Create starter README.md if missing
-  README_FILE="$NEW_DIR/README.md"
-  if [ ! -f "$README_FILE" ]; then
-    cat > "$README_FILE" <<EOF
+    if [ $MOVED -eq 1 ]; then
+      # Create starter README.md if missing
+      README_FILE="$NEW_DIR/README.md"
+      if [ ! -f "$README_FILE" ]; then
+        cat >"$README_FILE" <<EOF
 # 🛠️ $DIRNAME
 
 Standalone utility script \`$BASENAME\`.
@@ -87,10 +95,17 @@ Standalone utility script \`$BASENAME\`.
 ./$BASENAME
 \`\`\`
 EOF
-    echo "📝 Created starter README.md in '$DIRNAME/README.md'."
+        echo "📝 Created starter README.md in '$DIRNAME/README.md'."
+      fi
+      SCRIPT_PATH="$TARGET_FILE"
+    else
+      echo "⚠️  Warning: Failed to move '$BASENAME' to '$DIRNAME/'. Proceeding with original script location."
+      SCRIPT_PATH="$SCRIPT_FILE"
+    fi
+  else
+    echo "⚠️  Warning: Failed to create directory '$NEW_DIR/'. Proceeding with original script location."
+    SCRIPT_PATH="$SCRIPT_FILE"
   fi
-
-  SCRIPT_PATH="$TARGET_FILE"
 elif [ -f "$SCRIPTS_DIR/$SOURCE/$SOURCE.sh" ]; then
   SCRIPT_PATH="$SCRIPTS_DIR/$SOURCE/$SOURCE.sh"
 elif [ -f "$SCRIPTS_DIR/$SOURCE/$SOURCE.py" ]; then
