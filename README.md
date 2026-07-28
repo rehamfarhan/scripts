@@ -11,6 +11,7 @@ A curated collection of custom utility scripts used for system management, produ
 - [📥 YouTube Downloader (ytvideo.sh)](#-youtube-downloader-ytvideosh)
 - [📊 Waybar Restarter (barr.sh)](#-waybar-restarter-barrsh)
 - [🚀 Rofi Entry Creator (mkrofi.sh)](#-rofi-entry-creator-mkrofish)
+- [🎲 Random Number Generator (rng.py)](#-random-number-generator-rngpy)
 - [🔗 Script Linker (scrlink.sh)](#-script-linker-scrlinksh)
 
 ---
@@ -197,6 +198,37 @@ sudo ./scrlink.sh <script_file> <target_command_name>
 # Example: Link ytvideo.sh as 'ytvideo'
 sudo ./scrlink.sh ytvideo.sh ytvideo
 ```
+
+---
+
+## 🎲 Random Number Generator (`rng.py`)
+
+An interactive terminal-based random number generator with custom bounds, precision, and inclusion/exclusion settings.
+
+### Features
+- **Flexible Bounds**: Prompts for lower and upper limits, automatically swapping them if entered in reverse order.
+- **Inclusion Settings**: Choose between including (inclusive) or excluding (exclusive) the specified bounds.
+- **Number Types**: Generates either whole numbers (integers) or decimal numbers (floats) with configurable decimal places (0-10).
+- **Interactive Rolling**: Configures limits once, then rolls new numbers on any keypress.
+- **Clean Interface**: Utilizes carriage returns to overwrite the same line, maintaining a clean and minimalist terminal view.
+- **Cross-Platform Support**: Uses raw terminal manipulation to detect keypresses on Unix/Linux systems with a fallback for Windows systems.
+
+### Usage
+Run the script using Python:
+```bash
+python3 rng.py
+```
+
+Follow the interactive prompts:
+1. Enter the lower and upper limits.
+2. Select the inclusion mode:
+   - `1` (Inclusive - default)
+   - `2` (Exclusive)
+3. Select the number type:
+   - `1` (Whole numbers - default)
+   - `2` (Decimals)
+4. (If Decimal chosen) Enter the desired decimal places (1-10).
+5. Press any key to roll a new random number, or press `q`, `Q`, or `Ctrl+C` to cleanly exit.
 
 ---
 
