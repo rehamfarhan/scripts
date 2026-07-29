@@ -5,7 +5,7 @@
 Interactive fzf game launcher featuring automatic game folder discovery,
 executable & Wine prefix configuration wizard, real-time binary inspector preview,
 star rating system, playtime tracking & background session monitoring,
-optional .desktop menu entry creator, and instant quick-launch mode (`run <name>`).
+toast notifications, optional .desktop menu entry creator, and instant quick-launch mode (`run <name>`).
 """
 
 import argparse
@@ -26,6 +26,9 @@ STATS_FILENAME = ".run_stats.json"
 IGNORE_DIRS = {"lib", "lib64", "share", ".git", ".wine", "node_modules"}
 DESKTOP_DIR = Path.home() / ".local" / "share" / "applications"
 
+USER_NAME = os.environ.get("USER", "DirectPass").strip().title()
+MAIN_BORDER_TITLE = f"🏰 {USER_NAME}'s Game Dungeon 🎮"
+
 # ANSI Color Codes
 COLOR_RESET = "\033[0m"
 COLOR_BOLD = "\033[1m"
@@ -34,6 +37,12 @@ COLOR_CYAN = "\033[36m"
 COLOR_GREY = "\033[90m"
 COLOR_GREEN = "\033[32m"
 COLOR_RED = "\033[31m"
+
+
+def clear_screen() -> None:
+    """Clear terminal screen and position cursor at top-left."""
+    sys.stdout.write("\033[H\033[2J")
+    sys.stdout.flush()
 
 
 def check_fzf() -> None:
@@ -53,6 +62,7 @@ def run_fzf(
     border_label: str = "",
     preview_cmd: str = "",
     preview_window: str = "right:50%:wrap",
+    footer: str = "",
 ) -> Tuple[Optional[str], str, Optional[str]]:
     """
     Run fzf with given items and return (selected_line, key_pressed, full_raw_selection).
@@ -60,15 +70,18 @@ def run_fzf(
     cmd = [
         "fzf",
         f"--prompt={prompt}",
-        "--height=~15",
-        "--margin=1,6%",
+        "--height=16",
+        "--margin=1,8%",
         "--border=rounded",
+        "--pointer=▶ ",
         "--ansi",
     ]
     if border_label:
         cmd.append(f"--border-label= {border_label} ")
     if header:
         cmd.append(f"--header={header}")
+    if footer:
+        cmd.append(f"--footer={footer}")
     if expect_keys:
         cmd.append(f"--expect={','.join(expect_keys)}")
     if with_nth:
@@ -231,18 +244,15 @@ def evaluate_binary_score(game_dir: Path, bin_path: Path) -> Tuple[int, str]:
     name_lower = bin_path.name.lower()
     score = 100
 
-    # Penalize known uninstaller / crash handler / setup utility names
     if any(k in name_lower for k in ("unins", "uninstall", "crash", "bugreport", "dxsetup", "vcredist", "redist", "setup", "update")):
         score -= 200
         return score, "⚠️ Utility / Uninstaller"
 
-    # Reward matching folder name
     folder_name_clean = game_dir.name.lower().replace("_", "").replace("-", "")
     bin_clean = bin_path.stem.lower().replace("_", "").replace("-", "")
     if bin_clean in folder_name_clean or folder_name_clean in bin_clean:
         score += 150
 
-    # Reward larger file sizes
     try:
         size = bin_path.stat().st_size
         if size > 10 * 1024 * 1024:  # > 10 MB
@@ -278,7 +288,6 @@ def scan_executables(game_dir: Path, max_depth: int = 3) -> List[Path]:
             elif os.access(file_path, os.X_OK) and not file_path.is_dir():
                 binaries.append(file_path)
 
-    # Sort by heuristic score descending, then by file size
     def sort_key(p: Path) -> Tuple[int, int]:
         score, _ = evaluate_binary_score(game_dir, p)
         size = p.stat().st_size if p.is_file() else 0
@@ -301,7 +310,6 @@ def render_binary_preview(binary_path: Path) -> None:
         size_str = "Unknown"
         mtime_str = "Unknown"
 
-    # Get file architecture using system `file` command if available
     file_type = "Executable"
     if shutil.which("file"):
         try:
@@ -322,7 +330,6 @@ def render_binary_preview(binary_path: Path) -> None:
     print(f"{COLOR_BOLD}💡 Status:{COLOR_RESET} {tag}")
     print(f"{COLOR_BOLD}──────────────────────────────────────────{COLOR_RESET}\n")
 
-    # If file is a shell script / batch file, display header peek
     if binary_path.suffix.lower() in (".sh", ".bat") or file_type.startswith("text"):
         print(f"{COLOR_BOLD}📜 Script Preview (First 15 Lines):{COLOR_RESET}")
         try:
@@ -397,7 +404,6 @@ Comment=Launched via Python Game Launcher
 
 def launch_game_and_monitor(games_root: Path, folder_key: str, script_path: Path) -> None:
     """Launch game in background detached session and launch background playtime monitor."""
-    # Spawn game process
     game_proc = subprocess.Popen(
         [str(script_path.resolve())],
         cwd=script_path.parent,
@@ -407,7 +413,6 @@ def launch_game_and_monitor(games_root: Path, folder_key: str, script_path: Path
         start_new_session=True,
     )
 
-    # Spawn background tracker monitor process
     self_py = sys.executable
     script_py = str(Path(__file__).resolve())
     subprocess.Popen(
@@ -418,7 +423,7 @@ def launch_game_and_monitor(games_root: Path, folder_key: str, script_path: Path
         start_new_session=True,
     )
 
-    # Exit main CLI immediately
+    clear_screen()
     sys.exit(0)
 
 
@@ -427,18 +432,15 @@ def monitor_background_session(games_root: Path, folder_key: str, pid: int) -> N
     start_time = time.time()
     iso_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    # Wait for game process to exit
     while True:
         try:
             os.kill(pid, 0)
         except OSError:
-            # PID no longer exists -> process exited!
             break
         time.sleep(3)
 
     elapsed_seconds = int(time.time() - start_time)
 
-    # Load & update stats
     stats_data = load_stats(games_root)
     game_stats = stats_data["stats"].setdefault(folder_key, {
         "rating": 0,
@@ -467,10 +469,11 @@ def prompt_star_rating(game_name: str) -> int:
         "⭐  1/5 (Bad)",
         "Unrated (0/5)",
     ]
+    clear_screen()
     ans, _, _ = run_fzf(
         rating_options,
         prompt=f"Rate '{game_name}': ",
-        border_label="⭐ Star Rating",
+        border_label="⭐ Star Rating Picker",
     )
     if ans:
         if "5/5" in ans: return 5
@@ -482,7 +485,7 @@ def prompt_star_rating(game_name: str) -> int:
 
 
 def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data: Dict[str, Any]) -> bool:
-    """Scan games_root for unregistered folders and run configuration wizard."""
+    """Scan games_root for unregistered folders and run configuration wizard in locked fzf frames."""
     registered_dirs = set(registry.get("games", {}).keys())
     changed = False
 
@@ -495,18 +498,15 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
     if not unregistered:
         return False
 
-    print(f"\n🎮 Found {len(unregistered)} new game folder(s) to configure!\n")
-
-    for folder in unregistered:
-        print(f"--------------------------------------------------")
-        print(f"📁 Configuring Folder: {folder.name}")
-
+    total = len(unregistered)
+    for idx, folder in enumerate(unregistered, start=1):
+        clear_screen()
         binaries = scan_executables(folder)
         if not binaries:
-            print(f"⚠️  No executables found in {folder.name}.")
             ans, _, _ = run_fzf(
                 ["1) Skip this folder for now", "2) Mark as ignored directory"],
                 prompt=f"Action for {folder.name}: ",
+                border_label=f"⚠️ No Binary ({idx}/{total}): {folder.name}",
             )
             if ans and "Mark as ignored" in ans:
                 registry["games"][folder.name] = {
@@ -517,7 +517,6 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
                 changed = True
             continue
 
-        # Prepare rich list items with relative path, size, and heuristic tag
         menu_items = []
         for b in binaries:
             rel = b.relative_to(folder)
@@ -529,19 +528,19 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
         script_path = str(Path(__file__).resolve())
         preview_cmd = f"'{py_exec}' '{script_path}' --preview-binary {{3}}"
 
+        clear_screen()
         selected_line, _, _ = run_fzf(
             menu_items,
-            prompt=f"Select binary for {folder.name}: ",
-            header="Use arrow keys to browse. Preview panel shows binary details.",
+            prompt="Select Binary: ",
+            header=f"Folder {idx}/{total}: {folder.name}\nUse ARROWS to preview binary metadata on right.",
             delimiter="\t",
             with_nth="1,2,4",
-            border_label="📁 Select Executable",
+            border_label=f"🧙 Setup ({idx}/{total}): {folder.name}",
             preview_cmd=preview_cmd,
             preview_window="right:55%:wrap",
         )
 
         if not selected_line:
-            print(f"Skipped {folder.name}.")
             continue
 
         parts = selected_line.split("\t")
@@ -549,21 +548,28 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
         is_windows = rel_binary.suffix.lower() in (".exe", ".bat", ".msi")
 
         clean_name = folder.name.replace("_", " ").replace("-", " ").title()
-        print(f"\nSuggested Game Name: {clean_name}")
-        user_name = input(f"Enter Game Display Name [default: {clean_name}]: ").strip()
+        
+        # Display Name Prompt
+        clear_screen()
+        print(f"{COLOR_BOLD}──────────────────────────────────────────────────{COLOR_RESET}")
+        print(f"🧙 {COLOR_BOLD}Setup ({idx}/{total}):{COLOR_RESET} {folder.name}")
+        print(f"💡 {COLOR_BOLD}Suggested Game Name:{COLOR_RESET} {COLOR_CYAN}{clean_name}{COLOR_RESET}")
+        print(f"{COLOR_BOLD}──────────────────────────────────────────────────{COLOR_RESET}\n")
+        user_name = input("Enter Game Display Name [Press ENTER for default]: ").strip()
         display_name = user_name if user_name else clean_name
 
         wine_prefix: Optional[Path] = None
         if is_windows:
             shared_prefix = games_root / ".wine"
             isolated_prefix = folder / ".wine"
+            clear_screen()
             ans, _, _ = run_fzf(
                 [
                     f"1) Shared Wine Prefix ({shared_prefix}) [Default]",
                     f"2) Isolated Per-Game Wine Prefix ({isolated_prefix})",
                 ],
-                prompt="Select Wine Prefix Configuration: ",
-                border_label="🍷 Wine Setup",
+                prompt="Select Wine Prefix: ",
+                border_label=f"🍷 Wine Prefix ({display_name})",
             )
             if ans and "Isolated" in ans:
                 wine_prefix = isolated_prefix
@@ -571,14 +577,15 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
                 wine_prefix = shared_prefix
                 shared_prefix.mkdir(parents=True, exist_ok=True)
 
+        clear_screen()
         ans_dt, _, _ = run_fzf(
             ["1) Yes (Create system menu shortcut)", "2) No (Keep fzf only)"],
             prompt="Create .desktop Application Entry? ",
-            border_label="🖥️ Desktop Shortcut",
+            border_label=f"🖥️ Desktop Entry ({display_name})",
         )
         create_dt = bool(ans_dt and "Yes" in ans_dt)
 
-        # Optional star rating prompt
+        # Star Rating
         rating = prompt_star_rating(display_name)
 
         launcher_script = create_launcher_script(
@@ -608,7 +615,6 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
             save_stats(games_root, stats_data)
 
         changed = True
-        print(f"✅ Configured '{display_name}' successfully!\n")
 
     if changed:
         save_registry(games_root, registry)
@@ -661,10 +667,12 @@ def quick_launch(games_root: Path, query: str, registry: Dict[str, Any]) -> None
 
 
 def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: Dict[str, Any]) -> None:
-    """Render main fzf launcher menu featuring ratings, playtime & relative time badges."""
+    """Render main fzf launcher menu featuring ratings, playtime, relative time badges & toast popups."""
     check_fzf()
+    toast_message: Optional[str] = None
 
     while True:
+        clear_screen()
         games = registry.get("games", {})
         stats = stats_data.get("stats", {})
         active_games = [g for g in games.values() if not g.get("ignored")]
@@ -688,7 +696,6 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
             time_str = format_playtime(playtime_sec)
             rel_played = format_relative_time(last_played_iso)
 
-            # Build row
             row_parts = [f"{icon}  {name}"]
             if stars_str:
                 row_parts.append(stars_str)
@@ -700,21 +707,28 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
             row_str = "   ".join(row_parts)
             menu_items.append(f"{row_str}\t{folder_key}")
 
+        # Render menu with toast notification if set
+        current_toast = toast_message if toast_message else ""
         selected_line, key, _ = run_fzf(
             menu_items,
-            prompt="Select Game: ",
-            header="ENTER: Launch | TAB: Hide | R: Rate Game | ESC: Exit",
+            prompt="🔍 Select Game: ",
+            header="ENTER: Launch Game | TAB: Hide | R: Rate Game | ESC: Exit",
             expect_keys=["tab", "enter", "r"],
             delimiter="\t",
             with_nth="1",
-            border_label="🎮 Game Launcher",
+            border_label=MAIN_BORDER_TITLE,
+            footer=f" {current_toast} " if current_toast else "",
         )
 
+        toast_message = None  # Reset toast for next loop
+
         if not selected_line:
+            clear_screen()
             sys.exit(0)
 
         parts = selected_line.split("\t")
         if len(parts) < 2:
+            clear_screen()
             sys.exit(0)
 
         folder_key = parts[1]
@@ -722,21 +736,23 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
         if not game_info:
             continue
 
+        g_name = game_info.get("display_name", folder_key)
+
         if key == "r":
-            # Rate selected game
-            new_rating = prompt_star_rating(game_info.get("display_name", folder_key))
+            new_rating = prompt_star_rating(g_name)
             stats_data["stats"].setdefault(folder_key, {})["rating"] = new_rating
             save_stats(games_root, stats_data)
+            stars_preview = "⭐" * new_rating if new_rating > 0 else "Unrated"
+            toast_message = f"{COLOR_GREEN}✓ Rated '{g_name}' {stars_preview}{COLOR_RESET}"
             continue
 
         if key == "tab":
-            # Toggle ignore state
             game_info["ignored"] = True
             save_registry(games_root, registry)
-            print(f"Ignored '{game_info.get('display_name')}'.")
+            toast_message = f"{COLOR_YELLOW}🙈 Ignored '{g_name}' (Hidden from menu){COLOR_RESET}"
             continue
 
-        # Launch game & monitor session
+        # Launch game
         folder_path = games_root / folder_key
         launcher_rel = game_info.get("launcher_script", "start_game.sh")
         script_path = folder_path / launcher_rel
@@ -785,12 +801,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # CLI subcommand for binary preview window in fzf
     if args.preview_binary:
         render_binary_preview(args.preview_binary)
         return
 
-    # CLI subcommand for background playtime monitor
     if args.monitor:
         g_root = Path(args.monitor[0])
         f_key = args.monitor[1]
@@ -804,15 +818,11 @@ def main() -> None:
     registry = load_registry(games_root)
     stats_data = load_stats(games_root)
 
-    # Check for quick-launch argument
     if args.query:
         quick_launch(games_root, args.query, registry)
         return
 
-    # Standard interactive flow: check for new un-registered folders
     configure_new_folders(games_root, registry, stats_data)
-
-    # Open main launcher menu
     main_launcher_menu(games_root, registry, stats_data)
 
 
