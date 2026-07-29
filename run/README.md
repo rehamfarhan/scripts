@@ -1,6 +1,6 @@
 # 🎮 Game Launcher (`run.py`)
 
-An intelligent interactive game launcher and manager utilizing `fzf` to discover new game directories, run setup wizards, manage Windows `.exe` Wine prefixes, generate standalone runner scripts, create `.desktop` menu entries, and support instant quick-launching (`run <name>`).
+An intelligent interactive game launcher and manager utilizing `fzf` to discover new game directories, run setup wizards with real-time binary inspector previews, manage Windows `.exe` Wine prefixes, track total playtime and star ratings, create `.desktop` menu entries, and support instant quick-launching (`run <name>`).
 
 ---
 
@@ -16,6 +16,12 @@ An intelligent interactive game launcher and manager utilizing `fzf` to discover
 ## ✨ Features
 
 - **Automated Game Discovery & Wizard**: Automatically detects unregistered subdirectories in `~/Games` and guides you through selecting main executables, setting display names, and configuring launcher wrappers.
+- **Real-Time Binary Inspector & Preview Panel**:
+  - Displays file size, architecture type, modification date, script peeks, and `⭐ Recommended` / `⚠️ Utility` status badges in a live `fzf` preview panel.
+  - Automatically sorts main game binaries above uninstallers and crash handlers.
+- **Star Rating System (0-5 ⭐)**: Rate games directly from the launcher (`R` key) or wizard. Displayed in gold stars (`⭐⭐⭐⭐⭐`).
+- **Playtime Tracker & Background Monitor (`.run_stats.json`)**: Spawns a background process (`--monitor`) that tracks game PID sessions and logs total playtime (e.g. `14.5h`) and play counts.
+- **Recently Played Badges**: Displays relative time badges next to each game in muted text: `(played 2h ago)`, `(played yesterday)`, `(never played)`.
 - **Wine Prefix Manager**:
   - **Shared Wine Prefix**: Uses `$GAMES_ROOT/.wine` by default for Windows `.exe` games.
   - **Isolated Wine Prefix**: Allows setting up a per-game isolated prefix (`<GameDir>/.wine`).
@@ -54,5 +60,7 @@ run --games-dir /path/to/custom/games
 ### Hotkeys in Menu
 - **`ENTER`**: Launch selected game in background and exit terminal.
 - **`TAB`**: Toggle ignore/hide status for selected game in registry.
+- **`R`**: Open star rating picker for selected game.
 - **`ESC` / `Ctrl+C`**: Exit menu.
+
 
