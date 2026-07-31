@@ -5,7 +5,8 @@
 Interactive fzf game launcher featuring automatic game folder discovery,
 executable & Wine prefix configuration wizard, real-time binary inspector preview,
 star rating system, playtime tracking & background session monitoring,
-toast notifications, optional .desktop menu entry creator, and instant quick-launch mode (`run <name>`).
+TAB utility menu, toast notifications, optional .desktop menu entry creator,
+and instant quick-launch mode (`run <name>`).
 """
 
 import argparse
@@ -63,6 +64,7 @@ def run_fzf(
     preview_cmd: str = "",
     preview_window: str = "right:50%:wrap",
     footer: str = "",
+    margin: str = "12%,12%",
 ) -> Tuple[Optional[str], str, Optional[str]]:
     """
     Run fzf with given items and return (selected_line, key_pressed, full_raw_selection).
@@ -71,7 +73,7 @@ def run_fzf(
         "fzf",
         f"--prompt={prompt}",
         "--height=16",
-        "--margin=1,8%",
+        f"--margin={margin}",
         "--border=rounded",
         "--pointer=▶ ",
         "--ansi",
@@ -350,10 +352,12 @@ def create_launcher_script(
     display_name: str,
     is_windows: bool,
     wine_prefix: Optional[Path],
+    wine_opts: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Generate executable start_game.sh wrapper inside game_dir."""
     script_path = game_dir / "start_game.sh"
     icon = "💻" if is_windows else "🐧"
+    wine_opts = wine_opts or {}
 
     lines = [
         "#!/usr/bin/env bash",
@@ -367,7 +371,17 @@ def create_launcher_script(
     if is_windows:
         if wine_prefix:
             lines.append(f'export WINEPREFIX="{wine_prefix.resolve()}"')
-        lines.append(f'wine "{rel_binary}" "$@"')
+        
+        hud = wine_opts.get("dxvk_hud")
+        if hud:
+            lines.append(f'export DXVK_HUD="{hud}"')
+
+        res = wine_opts.get("resolution")
+        safe_title = re.sub(r'[^a-zA-Z0-9]', '_', display_name)
+        if res:
+            lines.append(f'wine explorer /desktop={safe_title},{res} "{rel_binary}" "$@"')
+        else:
+            lines.append(f'wine "{rel_binary}" "$@"')
     else:
         lines.append('export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-x11}"')
         lines.append(f'exec "./{rel_binary}" "$@"')
@@ -457,6 +471,93 @@ def monitor_background_session(games_root: Path, folder_key: str, pid: int) -> N
     sys.exit(0)
 
 
+# --- Wine & Execution Settings Wizard ---
+
+def configure_wine_settings(
+    games_root: Path,
+    folder: Path,
+    is_windows: bool,
+    current_name: str = "",
+) -> Tuple[Optional[Path], Dict[str, Any]]:
+    """Prompt interactively for Wine prefix, virtual desktop resolution, DXVK HUD, and Windows version."""
+    if not is_windows:
+        return None, {}
+
+    shared_prefix = games_root / ".wine"
+    isolated_prefix = folder / ".wine"
+
+    clear_screen()
+    ans_p, _, _ = run_fzf(
+        [
+            f"1) Shared Wine Prefix ({shared_prefix}) [Default]",
+            f"2) Isolated Per-Game Wine Prefix ({isolated_prefix})",
+        ],
+        prompt="Select Wine Prefix: ",
+        border_label=f"🍷 Wine Prefix ({current_name})",
+    )
+    wine_prefix = isolated_prefix if (ans_p and "Isolated" in ans_p) else shared_prefix
+    wine_prefix.mkdir(parents=True, exist_ok=True)
+
+    res_options = [
+        "1) Disabled (Native Fullscreen) [Default]",
+        "2) 1920x1080 (Full HD)",
+        "3) 2560x1440 (2K QHD)",
+        "4) 3840x2160 (4K UHD)",
+        "5) 1280x720 (HD)",
+    ]
+    clear_screen()
+    ans_res, _, _ = run_fzf(
+        res_options,
+        prompt="Virtual Desktop Resolution: ",
+        border_label="🖥️ Wine Virtual Desktop",
+    )
+    resolution = None
+    if ans_res:
+        if "1920x1080" in ans_res: resolution = "1920x1080"
+        elif "2560x1440" in ans_res: resolution = "2560x1440"
+        elif "3840x2160" in ans_res: resolution = "3840x2160"
+        elif "1280x720" in ans_res: resolution = "1280x720"
+
+    hud_options = [
+        "1) Off (Default)",
+        "2) Basic (FPS Counter)",
+        "3) Full (FPS, GPU, VRAM, Temp)",
+    ]
+    clear_screen()
+    ans_hud, _, _ = run_fzf(
+        hud_options,
+        prompt="DXVK Vulkan Performance HUD: ",
+        border_label="📊 DXVK Performance HUD",
+    )
+    dxvk_hud = None
+    if ans_hud:
+        if "Basic" in ans_hud: dxvk_hud = "fps"
+        elif "Full" in ans_hud: dxvk_hud = "full"
+
+    win_options = [
+        "1) Windows 10 (win10) [Default]",
+        "2) Windows 7 (win7)",
+        "3) Windows 11 (win11)",
+    ]
+    clear_screen()
+    ans_win, _, _ = run_fzf(
+        win_options,
+        prompt="Windows OS Version: ",
+        border_label="🪟 Windows Version",
+    )
+    win_ver = "win10"
+    if ans_win:
+        if "win7" in ans_win: win_ver = "win7"
+        elif "win11" in ans_win: win_ver = "win11"
+
+    opts = {
+        "resolution": resolution,
+        "dxvk_hud": dxvk_hud,
+        "win_ver": win_ver,
+    }
+    return wine_prefix, opts
+
+
 # --- Rating & Setup Wizard ---
 
 def prompt_star_rating(game_name: str) -> int:
@@ -517,16 +618,16 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
                 changed = True
             continue
 
+        # Clean binary menu items: size and path only (no cluttering tags in column 1)
         menu_items = []
         for b in binaries:
             rel = b.relative_to(folder)
             size_str = get_file_size_str(b.stat().st_size if b.is_file() else 0)
-            score, tag = evaluate_binary_score(folder, b)
-            menu_items.append(f"{tag:<28}\t{size_str:<10}\t{b.resolve()}\t{rel}")
+            menu_items.append(f"{size_str:>10}\t{b.resolve()}\t{rel}")
 
         py_exec = sys.executable
         script_path = str(Path(__file__).resolve())
-        preview_cmd = f"'{py_exec}' '{script_path}' --preview-binary {{3}}"
+        preview_cmd = f"'{py_exec}' '{script_path}' --preview-binary {{2}}"
 
         clear_screen()
         selected_line, _, _ = run_fzf(
@@ -534,8 +635,8 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
             prompt="Select Binary: ",
             header=f"Folder {idx}/{total}: {folder.name}\nUse ARROWS to preview binary metadata on right.",
             delimiter="\t",
-            with_nth="1,2,4",
-            border_label=f"🧙 Setup ({idx}/{total}): {folder.name}",
+            with_nth="1,3",
+            border_label=f"📁 Select Executable ({idx}/{total})",
             preview_cmd=preview_cmd,
             preview_window="right:55%:wrap",
         )
@@ -544,12 +645,12 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
             continue
 
         parts = selected_line.split("\t")
-        rel_binary = Path(parts[3])
+        rel_binary = Path(parts[2])
         is_windows = rel_binary.suffix.lower() in (".exe", ".bat", ".msi")
 
         clean_name = folder.name.replace("_", " ").replace("-", " ").title()
-        
-        # Display Name Prompt
+
+        # Display Name Prompt & Directory Renaming on Disk
         clear_screen()
         print(f"{COLOR_BOLD}──────────────────────────────────────────────────{COLOR_RESET}")
         print(f"🧙 {COLOR_BOLD}Setup ({idx}/{total}):{COLOR_RESET} {folder.name}")
@@ -558,24 +659,21 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
         user_name = input("Enter Game Display Name [Press ENTER for default]: ").strip()
         display_name = user_name if user_name else clean_name
 
+        # Disk directory renaming
+        target_dir_name = re.sub(r'[/\\?%*:|"<>]', '', display_name).strip()
+        if target_dir_name and target_dir_name != folder.name:
+            target_folder = games_root / target_dir_name
+            if not target_folder.exists():
+                try:
+                    folder.rename(target_folder)
+                    folder = target_folder
+                except Exception as e:
+                    print(f"Warning: Could not rename folder to '{target_dir_name}': {e}", file=sys.stderr)
+
         wine_prefix: Optional[Path] = None
+        wine_opts: Dict[str, Any] = {}
         if is_windows:
-            shared_prefix = games_root / ".wine"
-            isolated_prefix = folder / ".wine"
-            clear_screen()
-            ans, _, _ = run_fzf(
-                [
-                    f"1) Shared Wine Prefix ({shared_prefix}) [Default]",
-                    f"2) Isolated Per-Game Wine Prefix ({isolated_prefix})",
-                ],
-                prompt="Select Wine Prefix: ",
-                border_label=f"🍷 Wine Prefix ({display_name})",
-            )
-            if ans and "Isolated" in ans:
-                wine_prefix = isolated_prefix
-            else:
-                wine_prefix = shared_prefix
-                shared_prefix.mkdir(parents=True, exist_ok=True)
+            wine_prefix, wine_opts = configure_wine_settings(games_root, folder, is_windows, current_name=display_name)
 
         clear_screen()
         ans_dt, _, _ = run_fzf(
@@ -585,11 +683,8 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
         )
         create_dt = bool(ans_dt and "Yes" in ans_dt)
 
-        # Star Rating
-        rating = prompt_star_rating(display_name)
-
         launcher_script = create_launcher_script(
-            folder, rel_binary, display_name, is_windows, wine_prefix
+            folder, rel_binary, display_name, is_windows, wine_prefix, wine_opts
         )
 
         desktop_path_str = None
@@ -604,21 +699,105 @@ def configure_new_folders(games_root: Path, registry: Dict[str, Any], stats_data
             "binary": str(rel_binary),
             "is_windows": is_windows,
             "wine_prefix": str(wine_prefix) if wine_prefix else None,
+            "wine_opts": wine_opts,
             "icon": "💻" if is_windows else "🐧",
             "launcher_script": str(launcher_script.relative_to(folder)),
             "desktop_entry": desktop_path_str,
             "ignored": False,
         }
 
-        if rating > 0:
-            stats_data["stats"].setdefault(folder.name, {})["rating"] = rating
-            save_stats(games_root, stats_data)
-
         changed = True
 
     if changed:
         save_registry(games_root, registry)
     return changed
+
+
+# --- TAB Utilities Sub-Menu ---
+
+def show_utilities_menu(
+    games_root: Path,
+    folder_key: str,
+    game_info: Dict[str, Any],
+    registry: Dict[str, Any],
+    stats_data: Dict[str, Any],
+) -> Optional[str]:
+    """Display interactive utility sub-menu for selected game."""
+    g_name = game_info.get("display_name", folder_key)
+    options = [
+        "⭐ Rate Game (0 - 5 Stars)",
+        "🍷 Configure Wine / Execution Settings",
+        "🖥️ Create / Recreate Desktop Shortcut",
+        "📁 Open Game Folder",
+        "🙈 Hide / Ignore Game",
+        "🗑️ Delete Launcher Entry",
+    ]
+    clear_screen()
+    ans, _, _ = run_fzf(
+        options,
+        prompt="Select Utility: ",
+        header=f"Managing: {g_name}",
+        border_label=f"⚙️ Utilities ({g_name})",
+    )
+    if not ans:
+        return None
+
+    if "Rate Game" in ans:
+        new_rating = prompt_star_rating(g_name)
+        stats_data["stats"].setdefault(folder_key, {})["rating"] = new_rating
+        save_stats(games_root, stats_data)
+        stars_preview = "⭐" * new_rating if new_rating > 0 else "Unrated"
+        return f"{COLOR_GREEN}✓ Rated '{g_name}' {stars_preview}{COLOR_RESET}"
+
+    elif "Configure Wine" in ans:
+        folder_path = games_root / folder_key
+        is_win = game_info.get("is_windows", False)
+        prefix, wine_opts = configure_wine_settings(games_root, folder_path, is_win, current_name=g_name)
+        game_info["wine_prefix"] = str(prefix) if prefix else None
+        game_info["wine_opts"] = wine_opts
+        
+        create_launcher_script(
+            folder_path,
+            Path(game_info["binary"]),
+            g_name,
+            is_win,
+            prefix,
+            wine_opts,
+        )
+        save_registry(games_root, registry)
+        return f"{COLOR_GREEN}✓ Updated Wine settings for '{g_name}'{COLOR_RESET}"
+
+    elif "Desktop Shortcut" in ans:
+        folder_path = games_root / folder_key
+        launcher_rel = game_info.get("launcher_script", "start_game.sh")
+        script_path = folder_path / launcher_rel
+        dt_path = create_desktop_entry(g_name, script_path, game_info.get("is_windows", False))
+        if dt_path:
+            game_info["desktop_entry"] = str(dt_path)
+            save_registry(games_root, registry)
+            return f"{COLOR_GREEN}✓ Created desktop entry for '{g_name}'{COLOR_RESET}"
+        return f"{COLOR_RED}✗ Failed to create desktop entry{COLOR_RESET}"
+
+    elif "Open Game Folder" in ans:
+        folder_path = games_root / folder_key
+        fm = shutil.which("xdg-open")
+        if fm:
+            subprocess.Popen([fm, str(folder_path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return f"{COLOR_CYAN}📁 Opened folder '{folder_key}'{COLOR_RESET}"
+
+    elif "Hide / Ignore" in ans:
+        game_info["ignored"] = True
+        save_registry(games_root, registry)
+        return f"{COLOR_YELLOW}🙈 Ignored '{g_name}' (Hidden from menu){COLOR_RESET}"
+
+    elif "Delete Launcher Entry" in ans:
+        registry.get("games", {}).pop(folder_key, None)
+        stats_data.get("stats", {}).pop(folder_key, None)
+        save_registry(games_root, registry)
+        save_stats(games_root, stats_data)
+        return f"{COLOR_RED}🗑️ Removed '{g_name}' launcher entry{COLOR_RESET}"
+
+    return None
 
 
 # --- Quick Launch & Main Launcher Menu ---
@@ -660,6 +839,7 @@ def quick_launch(games_root: Path, query: str, registry: Dict[str, Any]) -> None
             target["display_name"],
             target["is_windows"],
             Path(target["wine_prefix"]) if target.get("wine_prefix") else None,
+            target.get("wine_opts"),
         )
 
     print(f"🚀 Quick-launching: {target['display_name']}...")
@@ -667,7 +847,7 @@ def quick_launch(games_root: Path, query: str, registry: Dict[str, Any]) -> None
 
 
 def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: Dict[str, Any]) -> None:
-    """Render main fzf launcher menu featuring ratings, playtime, relative time badges & toast popups."""
+    """Render main fzf launcher menu featuring aligned columns, ratings, playtime & TAB utilities."""
     check_fzf()
     toast_message: Optional[str] = None
 
@@ -696,31 +876,28 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
             time_str = format_playtime(playtime_sec)
             rel_played = format_relative_time(last_played_iso)
 
-            row_parts = [f"{icon}  {name}"]
-            if stars_str:
-                row_parts.append(stars_str)
-            if time_str:
-                row_parts.append(f"{COLOR_CYAN}{time_str}{COLOR_RESET}")
-            if rel_played:
-                row_parts.append(f"{COLOR_GREY}(played {rel_played}){COLOR_RESET}")
+            # Fixed-width column formatting
+            name_padded = f"{name[:22]:<22}"
+            stars_padded = f"{stars_str:<10}" if stars_str else f"{'':<10}"
+            time_padded = f"{COLOR_CYAN}{time_str:<6}{COLOR_RESET}" if time_str else f"{'':<6}"
+            rel_padded = f"{COLOR_GREY}(played {rel_played}){COLOR_RESET}" if rel_played else ""
 
-            row_str = "   ".join(row_parts)
+            row_str = f"{icon}  {name_padded}   {stars_padded}   {time_padded}   {rel_padded}"
             menu_items.append(f"{row_str}\t{folder_key}")
 
-        # Render menu with toast notification if set
         current_toast = toast_message if toast_message else ""
         selected_line, key, _ = run_fzf(
             menu_items,
             prompt="🔍 Select Game: ",
-            header="ENTER: Launch Game | TAB: Hide | R: Rate Game | ESC: Exit",
-            expect_keys=["tab", "enter", "r"],
+            header="ENTER: Launch Game | TAB: Utilities | ESC: Exit",
+            expect_keys=["tab", "enter"],
             delimiter="\t",
             with_nth="1",
             border_label=MAIN_BORDER_TITLE,
             footer=f" {current_toast} " if current_toast else "",
         )
 
-        toast_message = None  # Reset toast for next loop
+        toast_message = None  # Reset toast
 
         if not selected_line:
             clear_screen()
@@ -736,20 +913,8 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
         if not game_info:
             continue
 
-        g_name = game_info.get("display_name", folder_key)
-
-        if key == "r":
-            new_rating = prompt_star_rating(g_name)
-            stats_data["stats"].setdefault(folder_key, {})["rating"] = new_rating
-            save_stats(games_root, stats_data)
-            stars_preview = "⭐" * new_rating if new_rating > 0 else "Unrated"
-            toast_message = f"{COLOR_GREEN}✓ Rated '{g_name}' {stars_preview}{COLOR_RESET}"
-            continue
-
         if key == "tab":
-            game_info["ignored"] = True
-            save_registry(games_root, registry)
-            toast_message = f"{COLOR_YELLOW}🙈 Ignored '{g_name}' (Hidden from menu){COLOR_RESET}"
+            toast_message = show_utilities_menu(games_root, folder_key, game_info, registry, stats_data)
             continue
 
         # Launch game
@@ -764,6 +929,7 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
                 game_info["display_name"],
                 game_info["is_windows"],
                 Path(game_info["wine_prefix"]) if game_info.get("wine_prefix") else None,
+                game_info.get("wine_opts"),
             )
 
         launch_game_and_monitor(games_root, folder_key, script_path)
