@@ -72,7 +72,7 @@ def run_fzf(
     cmd = [
         "fzf",
         f"--prompt={prompt}",
-        "--height=16",
+        "--height=40",
         f"--margin={margin}",
         "--border=rounded",
         "--pointer=▶ ",
@@ -268,7 +268,7 @@ def evaluate_binary_score(game_dir: Path, bin_path: Path) -> Tuple[int, str]:
     return score, tag
 
 
-def scan_executables(game_dir: Path, max_depth: int = 3) -> List[Path]:
+def scan_executables(game_dir: Path, max_depth: int = 2) -> List[Path]:
     """Scan game_dir up to max_depth and return executables sorted by heuristic score."""
     binaries: List[Path] = []
     base_depth = len(game_dir.parts)

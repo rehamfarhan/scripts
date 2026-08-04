@@ -115,7 +115,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        print(f"\n\n{YELLOW}Exited generator cleanly.{RESET}\n")
+        print(f"\n\n{YELLOW}Exited generator.{RESET}\n")
 
 if __name__ == "__main__":
     main()
