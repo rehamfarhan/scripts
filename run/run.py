@@ -942,8 +942,6 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
         if not active_games:
             print("No games available. Run setup or check your Games folder.", file=sys.stderr)
             sys.exit(1)
-            print("No games available. Run setup or check your Games folder.", file=sys.stderr)
-            sys.exit(1)
 
         menu_items = []
         for g in active_games:
@@ -956,17 +954,27 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
             playtime_sec = g_stats.get("playtime_seconds", 0)
             last_played_iso = g_stats.get("last_played")
 
-            stars_str = get_star_string(rating)
             time_str = format_playtime(playtime_sec)
             rel_played = format_relative_time(last_played_iso)
 
-            # Fixed-width column formatting
-            name_padded = f"{name[:22]:<22}"
-            stars_padded = f"{stars_str:<10}" if stars_str else f"{'':<10}"
-            time_padded = f"{COLOR_CYAN}{time_str:<6}{COLOR_RESET}" if time_str else f"{'':<6}"
-            rel_padded = f"{COLOR_GREY}(played {rel_played}){COLOR_RESET}" if rel_played else ""
+            # ANSI-safe visual column alignment
+            name_col = f"{name[:24]:<24}"
 
-            row_str = f"{icon}  {name_padded}   {stars_padded}   {time_padded}   {rel_padded}"
+            if rating > 0:
+                stars_part = "★" * rating
+                pad_part = " " * (6 - rating)
+                stars_col = f"{COLOR_YELLOW}{stars_part}{COLOR_RESET}{pad_part}"
+            else:
+                stars_col = " " * 6
+
+            if time_str:
+                time_col = f"{COLOR_CYAN}{time_str:>6}{COLOR_RESET}"
+            else:
+                time_col = " " * 6
+
+            rel_col = f"{COLOR_GREY}(played {rel_played}){COLOR_RESET}" if rel_played else ""
+
+            row_str = f"{icon}  {name_col}  {stars_col}  {time_col}   {rel_col}"
             menu_items.append(f"{row_str}\t{folder_key}")
 
         current_toast = toast_message if toast_message else ""
