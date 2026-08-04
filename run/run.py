@@ -725,8 +725,10 @@ def show_utilities_menu(
     """Display interactive utility sub-menu for selected game."""
     g_name = game_info.get("display_name", folder_key)
     options = [
+        "✏️ Rename Game Entry",
         "⭐ Rate Game (0 - 5 Stars)",
         "🍷 Configure Wine / Execution Settings",
+        "🛠️ Change Main Executable Binary",
         "🖥️ Create / Recreate Desktop Shortcut",
         "📁 Open Game Folder",
         "🙈 Hide / Ignore Game",
@@ -742,7 +744,35 @@ def show_utilities_menu(
     if not ans:
         return None
 
-    if "Rate Game" in ans:
+    if "Rename Game Entry" in ans:
+        clear_screen()
+        print(f"{COLOR_BOLD}──────────────────────────────────────────────────{COLOR_RESET}")
+        print(f"✏️  {COLOR_BOLD}Renaming Game Entry:{COLOR_RESET} {g_name}")
+        print(f"{COLOR_BOLD}──────────────────────────────────────────────────{COLOR_RESET}\n")
+        new_name = input(f"Enter new display name [default: {g_name}]: ").strip()
+        if new_name and new_name != g_name:
+            game_info["display_name"] = new_name
+            folder_path = games_root / folder_key
+            is_win = game_info.get("is_windows", False)
+            prefix = Path(game_info["wine_prefix"]) if game_info.get("wine_prefix") else None
+            opts = game_info.get("wine_opts")
+            script_path = create_launcher_script(
+                folder_path,
+                Path(game_info["binary"]),
+                new_name,
+                is_win,
+                prefix,
+                opts,
+            )
+            if game_info.get("desktop_entry"):
+                dt_path = create_desktop_entry(new_name, script_path, is_win)
+                if dt_path:
+                    game_info["desktop_entry"] = str(dt_path)
+            save_registry(games_root, registry)
+            return f"{COLOR_GREEN}✓ Renamed '{g_name}' to '{new_name}'{COLOR_RESET}"
+        return None
+
+    elif "Rate Game" in ans:
         new_rating = prompt_star_rating(g_name)
         stats_data["stats"].setdefault(folder_key, {})["rating"] = new_rating
         save_stats(games_root, stats_data)
@@ -767,6 +797,47 @@ def show_utilities_menu(
         save_registry(games_root, registry)
         return f"{COLOR_GREEN}✓ Updated Wine settings for '{g_name}'{COLOR_RESET}"
 
+    elif "Change Main Executable" in ans:
+        folder_path = games_root / folder_key
+        binaries = scan_executables(folder_path)
+        if not binaries:
+            return f"{COLOR_RED}✗ No executables found in folder{COLOR_RESET}"
+
+        menu_items = []
+        for b in binaries:
+            rel = b.relative_to(folder_path)
+            size_str = get_file_size_str(b.stat().st_size if b.is_file() else 0)
+            menu_items.append(f"{size_str:>10}\t{b.resolve()}\t{rel}")
+
+        py_exec = sys.executable
+        script_path_py = str(Path(__file__).resolve())
+        preview_cmd = f"'{py_exec}' '{script_path_py}' --preview-binary {{2}}"
+
+        clear_screen()
+        selected_line, _, _ = run_fzf(
+            menu_items,
+            prompt="Select Main Binary: ",
+            header=f"Managing: {g_name}\nUse ARROWS to preview binary details.",
+            delimiter="\t",
+            with_nth="1,3",
+            border_label=f"🛠️ Select Binary ({g_name})",
+            preview_cmd=preview_cmd,
+            preview_window="right:55%:wrap",
+        )
+        if selected_line:
+            parts = selected_line.split("\t")
+            rel_binary = Path(parts[2])
+            is_win = rel_binary.suffix.lower() in (".exe", ".bat", ".msi")
+            game_info["binary"] = str(rel_binary)
+            game_info["is_windows"] = is_win
+            game_info["icon"] = "💻" if is_win else "🐧"
+            prefix = Path(game_info["wine_prefix"]) if game_info.get("wine_prefix") else None
+            opts = game_info.get("wine_opts")
+            create_launcher_script(folder_path, rel_binary, g_name, is_win, prefix, opts)
+            save_registry(games_root, registry)
+            return f"{COLOR_GREEN}✓ Updated binary for '{g_name}' to {rel_binary.name}{COLOR_RESET}"
+        return None
+
     elif "Desktop Shortcut" in ans:
         folder_path = games_root / folder_key
         launcher_rel = game_info.get("launcher_script", "start_game.sh")
@@ -780,7 +851,7 @@ def show_utilities_menu(
 
     elif "Open Game Folder" in ans:
         folder_path = games_root / folder_key
-        fm = shutil.which("xdg-open")
+        fm = shutil.which("spf") or shutil.which("xdg-open")
         if fm:
             subprocess.Popen([fm, str(folder_path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return f"{COLOR_CYAN}📁 Opened folder '{folder_key}'{COLOR_RESET}"
@@ -847,7 +918,7 @@ def quick_launch(games_root: Path, query: str, registry: Dict[str, Any]) -> None
 
 
 def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: Dict[str, Any]) -> None:
-    """Render main fzf launcher menu featuring aligned columns, ratings, playtime & TAB utilities."""
+    """Render main fzf launcher menu sorted by recently played timestamp, with aligned columns & TAB utilities."""
     check_fzf()
     toast_message: Optional[str] = None
 
@@ -855,9 +926,22 @@ def main_launcher_menu(games_root: Path, registry: Dict[str, Any], stats_data: D
         clear_screen()
         games = registry.get("games", {})
         stats = stats_data.get("stats", {})
-        active_games = [g for g in games.values() if not g.get("ignored")]
+
+        # Sort games by recently played timestamp descending
+        def get_sort_key(g_item: Dict[str, Any]) -> str:
+            f_key = g_item.get("dir", "")
+            lp = stats.get(f_key, {}).get("last_played")
+            return lp if lp else ""
+
+        active_games = sorted(
+            [g for g in games.values() if not g.get("ignored")],
+            key=get_sort_key,
+            reverse=True,
+        )
 
         if not active_games:
+            print("No games available. Run setup or check your Games folder.", file=sys.stderr)
+            sys.exit(1)
             print("No games available. Run setup or check your Games folder.", file=sys.stderr)
             sys.exit(1)
 
