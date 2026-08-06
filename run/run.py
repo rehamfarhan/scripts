@@ -414,12 +414,101 @@ Comment=Launched via Python Game Launcher
         return None
 
 
+COLOR_MAGENTA = "\033[35m"
+
+
+def fetch_online_quote() -> str:
+    """Fetch random quote from online API with fast 1.5s timeout and offline fallback."""
+    import random
+    import urllib.request
+
+    urls = [
+        "https://dummyjson.com/quotes/random",
+        "https://api.stoicquote.com/quote",
+    ]
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "GameLauncher/1.0"})
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    quote = data.get("quote") or data.get("text")
+                    author = data.get("author") or "Unknown"
+                    if quote:
+                        return f'"{quote}" — {author}'
+        except Exception:
+            pass
+
+    fallbacks = [
+        f'"Praise the Sun! ☀️ Hope you enjoyed that run, {USER_NAME}!"',
+        f'"GG WP! Great session, {USER_NAME}!"',
+        f'"The cake may be a lie, but that run was 100% real!"',
+        f'"Victory or defeat, every session makes you stronger!"',
+        f'"Stay hydrated and see you in the dungeon next time! 🏰"',
+    ]
+    return random.choice(fallbacks)
+
+
+def format_session_duration(seconds: int) -> str:
+    """Format exact session seconds cleanly (e.g. 24m 15s or 45s)."""
+    if seconds < 60:
+        return f"{seconds}s"
+    mins = seconds // 60
+    secs = seconds % 60
+    if mins < 60:
+        return f"{mins}m {secs}s" if secs else f"{mins}m"
+    hours = mins // 60
+    rem_m = mins % 60
+    return f"{hours}h {rem_m}m"
+
+
+def render_post_game_recap(
+    game_name: str,
+    session_sec: int,
+    total_sec: int,
+    play_count: int,
+    rating: int,
+) -> None:
+    """Render centered, color-coded post-game session recap card in terminal."""
+    clear_screen()
+
+    stars = "⭐" * rating if rating > 0 else "Unrated"
+    sess_str = format_session_duration(session_sec)
+    tot_str = format_playtime(total_sec) or "0m"
+    quote = fetch_online_quote()
+
+    box_lines = [
+        f"{COLOR_CYAN}✨ ──────────────────────────────────────────────────────────── ✨{COLOR_RESET}",
+        f"🎮 {COLOR_BOLD}{COLOR_YELLOW}GAME SESSION RECAP:{COLOR_RESET} {COLOR_BOLD}{game_name}{COLOR_RESET}",
+        f"{COLOR_CYAN}✨ ──────────────────────────────────────────────────────────── ✨{COLOR_RESET}",
+        f"⏱️  {COLOR_BOLD}Session Duration:{COLOR_RESET}  {COLOR_GREEN}{sess_str}{COLOR_RESET}",
+        f"⌛ {COLOR_BOLD}Total Playtime:{COLOR_RESET}    {COLOR_CYAN}{tot_str}{COLOR_RESET} (Session #{play_count})",
+        f"⭐ {COLOR_BOLD}Rating:{COLOR_RESET}            {stars}",
+        f"{COLOR_CYAN}────────────────────────────────────────────────────────────────{COLOR_RESET}",
+        f"💬 {COLOR_BOLD}{COLOR_MAGENTA}Quote:{COLOR_RESET} {quote}",
+        f"{COLOR_CYAN}✨ ──────────────────────────────────────────────────────────── ✨{COLOR_RESET}",
+    ]
+
+    _, term_rows = shutil.get_terminal_size((80, 24))
+    box_height = len(box_lines)
+    top_pad = max(0, (term_rows - box_height) // 2)
+
+    sys.stdout.write("\n" * top_pad)
+    for line in box_lines:
+        print(line)
+    sys.stdout.flush()
+
+
 # --- Foreground Attached Execution & Playtime Tracking ---
 
 def launch_game_attached(games_root: Path, folder_key: str, script_path: Path) -> None:
     """Launch game attached in foreground, streaming live logs, waiting, and logging playtime."""
+    registry = load_registry(games_root)
+    game_info = registry.get("games", {}).get(folder_key, {})
+    game_name = game_info.get("display_name", folder_key)
+
     clear_screen()
-    print(f"{COLOR_BOLD}🚀 Launching game...{COLOR_RESET}\n")
+    print(f"{COLOR_BOLD}🚀 Launching '{game_name}'...{COLOR_RESET}\n")
 
     start_time = time.time()
     iso_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -450,7 +539,15 @@ def launch_game_attached(games_root: Path, folder_key: str, script_path: Path) -
     game_stats["last_played"] = iso_now
 
     save_stats(games_root, stats_data)
-    print(f"\n{COLOR_GREEN}✓ Game session ended. Total playtime logged ({format_playtime(game_stats['playtime_seconds'])}).{COLOR_RESET}")
+
+    # Render post-game recap card centered on screen
+    render_post_game_recap(
+        game_name,
+        elapsed_seconds,
+        game_stats["playtime_seconds"],
+        game_stats["play_count"],
+        game_stats.get("rating", 0),
+    )
     sys.exit(0)
 
 
