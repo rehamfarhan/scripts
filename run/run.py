@@ -469,7 +469,9 @@ def render_post_game_recap(
     play_count: int,
     rating: int,
 ) -> None:
-    """Render centered, color-coded post-game session recap card in terminal."""
+    """Render centered, color-coded post-game session recap card spanning full terminal width."""
+    import textwrap
+
     clear_screen()
 
     stars = "⭐" * rating if rating > 0 else "Unrated"
@@ -477,19 +479,27 @@ def render_post_game_recap(
     tot_str = format_playtime(total_sec) or "0m"
     quote = fetch_online_quote()
 
-    box_lines = [
-        f"{COLOR_CYAN}✨ ──────────────────────────────────────────────────────────── ✨{COLOR_RESET}",
-        f"🎮 {COLOR_BOLD}{COLOR_YELLOW}GAME SESSION RECAP:{COLOR_RESET} {COLOR_BOLD}{game_name}{COLOR_RESET}",
-        f"{COLOR_CYAN}✨ ──────────────────────────────────────────────────────────── ✨{COLOR_RESET}",
-        f"⏱️  {COLOR_BOLD}Session Duration:{COLOR_RESET}  {COLOR_GREEN}{sess_str}{COLOR_RESET}",
-        f"⌛ {COLOR_BOLD}Total Playtime:{COLOR_RESET}    {COLOR_CYAN}{tot_str}{COLOR_RESET} (Session #{play_count})",
-        f"⭐ {COLOR_BOLD}Rating:{COLOR_RESET}            {stars}",
-        f"{COLOR_CYAN}────────────────────────────────────────────────────────────────{COLOR_RESET}",
-        f"💬 {COLOR_BOLD}{COLOR_MAGENTA}Quote:{COLOR_RESET} {quote}",
-        f"{COLOR_CYAN}✨ ──────────────────────────────────────────────────────────── ✨{COLOR_RESET}",
-    ]
+    term_cols, term_rows = shutil.get_terminal_size((80, 24))
+    w = max(40, term_cols - 2)
+    dash = "─" * max(10, w - 4)
+    line_sep = "─" * w
 
-    _, term_rows = shutil.get_terminal_size((80, 24))
+    wrapped_quote = textwrap.wrap(quote, width=max(30, w - 8))
+
+    box_lines = [
+        f"{COLOR_CYAN}✨ {dash} ✨{COLOR_RESET}",
+        f"  🎮 {COLOR_BOLD}{COLOR_YELLOW}GAME SESSION RECAP:{COLOR_RESET} {COLOR_BOLD}{game_name}{COLOR_RESET}",
+        f"{COLOR_CYAN}✨ {dash} ✨{COLOR_RESET}",
+        f"  ⏱️  {COLOR_BOLD}Session Duration:{COLOR_RESET}  {COLOR_GREEN}{sess_str}{COLOR_RESET}",
+        f"  ⌛ {COLOR_BOLD}Total Playtime:{COLOR_RESET}    {COLOR_CYAN}{tot_str}{COLOR_RESET} (Session #{play_count})",
+        f"  ⭐ {COLOR_BOLD}Rating:{COLOR_RESET}            {stars}",
+        f"{COLOR_CYAN}{line_sep}{COLOR_RESET}",
+        f"  💬 {COLOR_BOLD}{COLOR_MAGENTA}Quote:{COLOR_RESET}",
+    ]
+    for ql in wrapped_quote:
+        box_lines.append(f"     {COLOR_MAGENTA}{ql}{COLOR_RESET}")
+    box_lines.append(f"{COLOR_CYAN}✨ {dash} ✨{COLOR_RESET}")
+
     box_height = len(box_lines)
     top_pad = max(0, (term_rows - box_height) // 2)
 
