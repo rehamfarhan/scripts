@@ -24,6 +24,7 @@ DEPENDENCIES=(
   yt-dlp
   aria2c
   ffmpeg
+  python3
 )
 
 for cmd in "${DEPENDENCIES[@]}"; do
@@ -45,6 +46,10 @@ for cmd in "${DEPENDENCIES[@]}"; do
       echo "Arch:          sudo pacman -S aria2"
       echo "Debian/Ubuntu: sudo apt install aria2"
       ;;
+    python3)
+      echo "Arch:          sudo pacman -S python python-mutagen"
+      echo "Debian/Ubuntu: sudo apt install python3 python3-mutagen"
+      ;;
     esac
 
     exit 1
@@ -55,6 +60,7 @@ done
 # Configuration
 ################################################################################
 
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/mediafetch"
 ARCHIVE_FILE="$CACHE_DIR/archive.txt"
 
@@ -107,7 +113,7 @@ Usage:
 Profiles:
 
   video    1080p H.265 MKV with subtitles
-  music    High quality MP3 with album artwork
+  music    High quality MP3 with album artwork & lyrics (kew compatible)
   podcast  Audio-only Opus
   archive  Maximum quality preservation
 
@@ -153,6 +159,8 @@ music)
     --embed-metadata
 
     --ppa "ThumbnailsConvertor:-vf crop=ih:ih"
+
+    --exec "post_process:python3 \"$SCRIPT_DIR/embed_lyrics.py\" {}"
   )
 
   ;;
