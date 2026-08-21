@@ -11,7 +11,7 @@ Each utility is organized into its own standalone directory containing the execu
 | Script / Folder | Command | Language | Description |
 | :--- | :--- | :--- | :--- |
 | [**`money/`**](money/) | `money` | Python 3 | Git-inspired terminal financial ledger with quick entry syntax, reservation system, and ASCII logging. |
-| [**`mediafetch/`**](mediafetch/) | `mf` | Bash | High-speed multi-threaded media downloader wrapper around `yt-dlp` & `aria2c` with presets for video, music, and podcasts. |
+| [**`mediafetch/`**](mediafetch/) | `mf` | Bash / Python | High-speed multi-threaded media downloader wrapper around `yt-dlp` & `aria2c` with presets for video, music (with automated lyrics & `kew` compatibility), and podcasts. |
 | [**`run/`**](run/) | `run` | Python 3 | Interactive `fzf` game launcher & wizard with Wine prefix management, registry tracking, and quick-launch mode. |
 | [**`ddlclauncher/`**](ddlclauncher/) | `ddlclauncher` | Bash | Interactive DDLC mod manager featuring thematic `fzf` UI, automatic scanner, launcher creator, and executable detection. |
 | [**`morsegen/`**](morsegen/) | `morsegen` | Python 3 | Bi-directional Morse code encoder and decoder with custom symbol support and distinct character validation. |

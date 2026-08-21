@@ -35,7 +35,32 @@ def get_installed_fonts():
         print(f"[Error] Failed to fetch system fonts: {e}")
         sys.exit(1)
 
-def select_font_with_fzf(fonts):
+def get_installed_emoji_fonts():
+    """Gets a sorted list of installed emoji font family names."""
+    fonts = set()
+    
+    # Method 1: Query fonts marked with color=true in fontconfig
+    try:
+        res = subprocess.run(["fc-list", ":color=true", "family"], capture_output=True, text=True, check=True)
+        for line in res.stdout.splitlines():
+            for family in line.split(","):
+                family = family.strip()
+                # Exclude non-emoji fonts like musical notation
+                if family and not any(skip in family.lower() for skip in ["music", "notation", "znamenny"]):
+                    fonts.add(family)
+    except Exception:
+        pass
+
+    # Method 2: Also scan all system fonts for known emoji keywords (e.g. Mutant, Blobmoji, Emoji)
+    all_fonts = get_installed_fonts()
+    for f in all_fonts:
+        f_lower = f.lower()
+        if "emoji" in f_lower or "mutant" in f_lower or "blob" in f_lower or "twemoji" in f_lower or "tossface" in f_lower:
+            fonts.add(f)
+
+    return sorted(list(fonts))
+
+def select_font_with_fzf(fonts, header="Select a Systemwide Font:"):
     """Launches fzf to interactively select a font."""
     if not shutil.which("fzf"):
         print("[Error] 'fzf' is not installed on this system. Please specify a font name as an argument.")
@@ -44,7 +69,7 @@ def select_font_with_fzf(fonts):
     font_input = "\n".join(fonts)
     try:
         process = subprocess.Popen(
-            ["fzf", "--header=Select a Systemwide Font:", "--prompt=Font > ", "--height=40%", "--layout=reverse", "--border"],
+            ["fzf", f"--header={header}", "--prompt=Font > ", "--height=40%", "--layout=reverse", "--border"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True
@@ -66,6 +91,79 @@ def validate_font(font_name, installed_fonts):
     print(f"[Warning] '{font_name}' was not explicitly matched in fc-list, but proceeding as requested.")
     return font_name
 
+def update_emoji_fontconfig(emoji_font):
+    print("-> Updating Fontconfig emoji configuration...")
+    fc_dir = CONFIG_DIR / "fontconfig"
+    fc_dir.mkdir(parents=True, exist_ok=True)
+    
+    fonts_conf = fc_dir / "fonts.conf"
+    if fonts_conf.exists():
+        backup_file(fonts_conf)
+        content = fonts_conf.read_text()
+        
+        # Update <family>emoji</family> prefer block
+        if "<family>emoji</family>" in content:
+            content = re.sub(
+                r'(<family>emoji</family>\s*<prefer>\s*<family>)[^<]+',
+                rf'\g<1>{emoji_font}',
+                content
+            )
+        else:
+            emoji_block = f"""  <alias binding="same">
+    <family>emoji</family>
+    <prefer>
+      <family>{emoji_font}</family>
+      <family>Noto Color Emoji</family>
+    </prefer>
+  </alias>
+"""
+            content = content.replace("<fontconfig>", f"<fontconfig>\n{emoji_block}", 1)
+        
+        # Update match rule for emoji family
+        if '<test qual="any" name="family"><string>emoji</string></test>' in content:
+            content = re.sub(
+                r'(<test qual="any" name="family"><string>emoji</string></test>\s*<edit name="family" mode="assign" binding="same"><string>)[^<]+',
+                rf'\g<1>{emoji_font}',
+                content
+            )
+        else:
+            match_block = f"""  <match target="pattern">
+    <test qual="any" name="family"><string>emoji</string></test>
+    <edit name="family" mode="assign" binding="same"><string>{emoji_font}</string></edit>
+  </match>
+"""
+            content = content.replace("</fontconfig>", f"{match_block}</fontconfig>")
+            
+        # Update weak append in pattern match if present
+        if '<edit name="family" mode="append" binding="weak">' in content:
+            content = re.sub(
+                r'(<edit name="family" mode="append" binding="weak">\s*<string>)[^<]+',
+                rf'\g<1>{emoji_font}',
+                content
+            )
+            
+        fonts_conf.write_text(content)
+    else:
+        # Create minimal fontconfig if fonts.conf doesn't exist yet
+        content = f"""<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <alias binding="same">
+    <family>emoji</family>
+    <prefer>
+      <family>{emoji_font}</family>
+      <family>Noto Color Emoji</family>
+    </prefer>
+  </alias>
+  <match target="pattern">
+    <test qual="any" name="family"><string>emoji</string></test>
+    <edit name="family" mode="assign" binding="same"><string>{emoji_font}</string></edit>
+  </match>
+</fontconfig>
+"""
+        fonts_conf.write_text(content)
+    print(f"  [OK] Emoji font set to '{emoji_font}'.")
+
 def update_fontconfig(font_name):
     print("-> Updating Fontconfig configuration...")
     fc_dir = CONFIG_DIR / "fontconfig"
@@ -74,43 +172,55 @@ def update_fontconfig(font_name):
     fonts_conf = fc_dir / "fonts.conf"
     backup_file(fonts_conf)
     
+    # Read existing emoji preference if available
+    current_emoji = "Fluent Emoji Color"
+    if fonts_conf.exists():
+        try:
+            m = re.search(r'<family>emoji</family>\s*<prefer>\s*<family>([^<]+)', fonts_conf.read_text())
+            if m:
+                current_emoji = m.group(1).strip()
+        except Exception:
+            pass
+    
     content = f"""<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
 <fontconfig>
-  <!-- Global Default Preference Aliases -->
-  <alias binding="strong">
-    <family>serif</family>
-    <prefer><family>{font_name}</family></prefer>
+  <alias binding="same">
+    <family>emoji</family>
+    <prefer>
+      <family>{current_emoji}</family>
+      <family>Noto Color Emoji</family>
+    </prefer>
   </alias>
-  <alias binding="strong">
+
+  <match target="pattern">
+    <test qual="any" name="family"><string>emoji</string></test>
+    <edit name="family" mode="assign" binding="same"><string>{current_emoji}</string></edit>
+  </match>
+
+  <!-- Append Emoji font as fallback for sans/serif/monospace -->
+  <alias>
     <family>sans-serif</family>
-    <prefer><family>{font_name}</family></prefer>
+    <prefer>
+      <family>{font_name}</family>
+      <family>{current_emoji}</family>
+    </prefer>
   </alias>
-  <alias binding="strong">
-    <family>sans</family>
-    <prefer><family>{font_name}</family></prefer>
-  </alias>
-  <alias binding="strong">
+  <alias>
     <family>monospace</family>
-    <prefer><family>{font_name}</family></prefer>
-  </alias>
-  <alias binding="strong">
-    <family>system-ui</family>
-    <prefer><family>{font_name}</family></prefer>
-  </alias>
-  <alias binding="strong">
-    <family>ui-sans-serif</family>
-    <prefer><family>{font_name}</family></prefer>
-  </alias>
-  <alias binding="strong">
-    <family>ui-monospace</family>
-    <prefer><family>{font_name}</family></prefer>
+    <prefer>
+      <family>{font_name}</family>
+      <family>{current_emoji}</family>
+    </prefer>
   </alias>
 
   <!-- Universal strong match: Prepend chosen font to any requested pattern -->
   <match target="pattern">
     <edit name="family" mode="prepend" binding="strong">
       <string>{font_name}</string>
+    </edit>
+    <edit name="family" mode="append" binding="weak">
+      <string>{current_emoji}</string>
     </edit>
   </match>
 
@@ -263,7 +373,6 @@ def update_waybar(font_name):
     print("-> Updating Waybar CSS configurations...")
     waybar_dir = CONFIG_DIR / "waybar"
     if waybar_dir.exists():
-        # Check active symlink style.css or 13_nerdy_compact_v
         styles = list(waybar_dir.glob("**/style.css"))
         for style_file in styles:
             try:
@@ -319,7 +428,24 @@ def main():
     parser = argparse.ArgumentParser(description="Systemwide Font Changer for Linux/Hyprland (cngtf)")
     parser.add_argument("font", nargs="?", help="Name of the font to apply (launches fzf menu if omitted)")
     parser.add_argument("--size", type=int, default=11, help="Font size to set (default: 11)")
+    parser.add_argument("-e", "--emoji", action="store_true", help="Change systemwide emoji font preference instead")
     args = parser.parse_args()
+
+    if args.emoji:
+        emoji_fonts = get_installed_emoji_fonts()
+        if not args.font:
+            selected_font = select_font_with_fzf(emoji_fonts, header="Select an Emoji Font:")
+        else:
+            selected_font = validate_font(args.font, emoji_fonts)
+
+        print(f"\n==================================================")
+        print(f" Applying Systemwide Emoji Font: '{selected_font}'")
+        print(f"==================================================\n")
+
+        update_emoji_fontconfig(selected_font)
+        refresh_system()
+        print(f"\n[Success] Systemwide emoji font changed to '{selected_font}' successfully!\n")
+        return
 
     installed_fonts = get_installed_fonts()
 
