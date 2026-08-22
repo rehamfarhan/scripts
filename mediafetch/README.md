@@ -74,8 +74,9 @@ mf podcast "https://www.youtube.com/watch?v=..."
 # Launch Interactive TUI Menu
 mf -i
 
-# Embed lyrics into existing local audio file
+# Embed lyrics into existing local audio file or entire folder recursively
 mf lyrics /path/to/song.mp3
+mf lyrics ~/Music
 
 # Inspect available stream formats only
 mf --list "https://www.youtube.com/watch?v=..."

@@ -278,20 +278,16 @@ def embed_lyrics_in_file(filepath: Path, plain_lyrics: str, synced_lyrics: str):
     return True
 
 
-def process_lyrics_target(file_str: str):
-    """Processes lyrics fetching and embedding for a single audio file."""
-    filepath = Path(file_str).resolve()
-    if not filepath.exists() or not filepath.is_file():
-        print(f"{RED}[lyrics] Error: File not found: {file_str}{RESET}", file=sys.stderr)
-        return False
-
+def _process_single_audio_file(filepath: Path, current_idx: int = 0, total_files: int = 0):
+    """Processes lyrics fetching and embedding for a single resolved audio file Path."""
     artist, title, album = get_audio_metadata(filepath)
     if not title:
         print(f"{YELLOW}[lyrics] Could not determine track title for {filepath.name}{RESET}", file=sys.stderr)
         return False
 
     display_name = f"{artist} - {title}" if artist else title
-    print(f"\n{CYAN}🎤 Fetching lyrics for: {BOLD}{display_name}{RESET} ...")
+    counter_str = f"[{current_idx}/{total_files}] " if total_files > 1 else ""
+    print(f"\n{CYAN}🎤 {counter_str}Fetching lyrics for: {BOLD}{display_name}{RESET} ({filepath.name}) ...")
 
     duration = 0.0
     if MUTAGEN_AVAILABLE and filepath.suffix.lower() == ".mp3":
@@ -313,6 +309,36 @@ def process_lyrics_target(file_str: str):
     lyric_type = "synchronized (.lrc + ID3/FLAC)" if synced else "plain text (ID3/FLAC)"
     print(f"{GREEN}✔ Successfully embedded {lyric_type} for: {display_name}{RESET}")
     return True
+
+
+def process_lyrics_target(file_str: str):
+    """Processes lyrics fetching for a single audio file OR recursively for an entire directory."""
+    filepath = Path(file_str).resolve()
+    if not filepath.exists():
+        print(f"{RED}[lyrics] Error: Path not found: {file_str}{RESET}", file=sys.stderr)
+        return False
+
+    if filepath.is_dir():
+        audio_extensions = {".mp3", ".flac", ".m4a", ".ogg", ".wav"}
+        audio_files = sorted([
+            f for f in filepath.rglob("*")
+            if f.is_file() and f.suffix.lower() in audio_extensions
+        ])
+
+        if not audio_files:
+            print(f"{YELLOW}[lyrics] No audio files found in directory: {filepath}{RESET}")
+            return False
+
+        print(f"\n{BOLD}{CYAN}🎵 Batch Lyrics Engine: Found {len(audio_files)} audio track(s) in {filepath}{RESET}")
+        success_count = 0
+        for idx, song_file in enumerate(audio_files, 1):
+            if _process_single_audio_file(song_file, idx, len(audio_files)):
+                success_count += 1
+
+        print(f"\n{BOLD}{GREEN}✨ Batch Complete! Successfully fetched & embedded lyrics for {success_count}/{len(audio_files)} track(s).{RESET}\n")
+        return True
+
+    return _process_single_audio_file(filepath)
 
 
 # ==============================================================================
