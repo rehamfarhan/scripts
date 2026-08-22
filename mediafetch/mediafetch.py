@@ -38,7 +38,6 @@ except ImportError:
 SCRIPT_PATH = Path(__file__).resolve()
 CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "mediafetch"
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "mediafetch"
-ARCHIVE_FILE = CACHE_DIR / "archive.txt"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULT_VIDEO_DIR = Path.home() / "Videos" / "Downloads"
@@ -555,7 +554,6 @@ def main():
     cmd = [
         "yt-dlp",
         "--newline",
-        "--download-archive", str(ARCHIVE_FILE),
         "-f", profile["format"],
         "-o", out_template
     ]

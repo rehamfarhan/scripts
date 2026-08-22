@@ -14,7 +14,6 @@ A robust, high-performance standalone Python wrapper for `yt-dlp` configured wit
   - 🎵 Music (`music`, `flac`, `podcast`): `~/Music/Downloaded`
   - 🎬 Videos (`video`, `shorts`, `archive`): `~/Videos/Downloaded`
 - **Configuration File**: `~/.config/mediafetch/config.json`
-- **Archive Tracking**: `~/.cache/mediafetch/archive.txt`
 
 ---
 
@@ -36,7 +35,6 @@ A robust, high-performance standalone Python wrapper for `yt-dlp` configured wit
   - Generates synchronized `.lrc` sidecar files for terminal players (`kew`, `cmus`).
 - **🎵 Local File Lyrics Tagging**: Command `mf lyrics track.mp3` to fetch and embed lyrics into existing local audio files.
 - **High-Speed Multi-Threaded Engine**: Uses `aria2c` with 8 concurrent connections (`-x 8 -s 8`) for maximum speed.
-- **Duplicate Prevention**: Keeps track of downloaded media IDs in `~/.cache/mediafetch/archive.txt`.
 
 ---
 
