@@ -1,32 +1,41 @@
-# 📥 Media Fetcher (`mediafetch.sh` / `mf`)
+# 📥 Media Fetcher (`mediafetch.py` / `mf`)
 
-A robust, high-performance wrapper for `yt-dlp` configured with multi-threaded downloads (`aria2c`), preset profiles for video, music, and podcasts, thumbnail embedding, subtitle integration, and download archive tracking.
+A robust, high-performance standalone Python wrapper for `yt-dlp` configured with multi-threaded downloads (`aria2c`), clipboard URL auto-pasting, smart destination directory routing, preset profiles for video, music, FLAC, shorts, podcasts, and archives, universal ID3/FLAC lyrics tagging, and download history tracking.
 
 ---
 
 ## 📋 Technical Overview
 
-- **Language**: Bash (`#!/usr/bin/env bash`) & Python 3 (`#!/usr/bin/env python3`)
-- **Dependencies**: `yt-dlp`, `aria2c`, `ffmpeg`, `python3`, `mutagen`
-- **System Location**: `mediafetch/mediafetch.sh`
+- **Language**: Python 3 (`#!/usr/bin/env python3`)
+- **Dependencies**: `yt-dlp`, `ffmpeg`, `aria2c` (optional), `python-mutagen` (optional)
+- **System Location**: `mediafetch/mediafetch.py`
 - **Target Command / Shorthand**: `mf`
-- **Archive Location**: `~/.cache/mediafetch/archive.txt`
+- **Default Destinations**:
+  - 🎵 Music (`music`, `flac`, `podcast`): `~/Music/Downloaded`
+  - 🎬 Videos (`video`, `shorts`, `archive`): `~/Videos/Downloaded`
+- **Configuration File**: `~/.config/mediafetch/config.json`
+- **Archive Tracking**: `~/.cache/mediafetch/archive.txt`
 
 ---
 
 ## ✨ Features
 
-- **High-Speed Multi-Threaded Engine**: Uses `aria2c` with 8 concurrent connections (`-x 8 -s 8`) for maximum bandwidth speed.
+- **Standalone Single-Executable Architecture**: Unified CLI downloader, interactive prompt, and LRCLIB lyrics tagger combined into one clean Python script.
+- **📋 Smart Clipboard Auto-Paste**: Running `mf music`, `mf video`, etc. without entering a URL automatically reads media URLs from your system clipboard (`wl-paste`, `xclip`, `pbpaste`).
+- **📁 Automatic Directory Routing**: Videos are routed to `~/Videos/Downloaded` and music to `~/Music/Downloaded` (auto-creates directories via `mkdir -p`).
 - **Smart Presets**:
-  - `video` (Default): 1080p H.265 MKV video, embeds PNG thumbnail, merges English subtitles.
-  - `music`: High quality MP3 (VBR quality 0), square-cropped album artwork metadata, automated synchronized/unsynchronized lyrics fetching from LRCLIB, ID3 `USLT` tag embedding, and `.lrc` sidecar generation (fully compatible with terminal players like `kew`).
+  - `video` (Default): 1080p H.265 MKV video, embeds PNG thumbnail, merges English subtitles (`en.*`).
+  - `music`: High quality MP3 (VBR 0), square-cropped album art metadata, automated LRCLIB lyrics tagging (ID3 `USLT` tags), and `.lrc` companion sidecar file generation.
+  - `flac`: Lossless FLAC audio extraction, square album art, embedded lyrics, and `.lrc` sidecar file generation.
+  - `shorts`: 1080p MP4 optimized for 9:16 vertical video formats (YouTube Shorts, Instagram Reels, TikTok).
   - `podcast`: Audio-only Opus format, embeds metadata and thumbnail.
   - `archive`: Maximum quality video/audio preservation with all available subtitles.
-- **Lyrics & Terminal Player (`kew`) Integration**:
-  - Automatically queries LRCLIB using title & artist tags.
-  - Embeds unsynchronized lyrics directly into MP3 ID3v2 `USLT` metadata frames.
-  - Generates synchronized `.lrc` companion files for real-time karaoke scrolling in `kew` (toggle with `m`).
-- **Format Selection Helper**: `--list` flag to inspect available streams/formats.
+- **🎤 Universal Embedded Lyrics & `kew` Player Integration**:
+  - Queries LRCLIB using clean track titles & artist tags.
+  - Embeds unsynchronized lyrics directly into MP3 ID3v2 `USLT` frames and FLAC Vorbis comments for universal player compatibility (VLC, Lollypop, Amberol, Foobar2000, etc.).
+  - Generates synchronized `.lrc` sidecar files for terminal players (`kew`, `cmus`).
+- **🎵 Local File Lyrics Tagging**: Command `mf lyrics track.mp3` to fetch and embed lyrics into existing local audio files.
+- **High-Speed Multi-Threaded Engine**: Uses `aria2c` with 8 concurrent connections (`-x 8 -s 8`) for maximum speed.
 - **Duplicate Prevention**: Keeps track of downloaded media IDs in `~/.cache/mediafetch/archive.txt`.
 
 ---
@@ -36,9 +45,9 @@ A robust, high-performance wrapper for `yt-dlp` configured with multi-threaded d
 Link the script to `/usr/local/bin` using `scrlink` under the shorthand `mf`:
 
 ```bash
-sudo ../scrlink/scrlink.sh mediafetch/mediafetch.sh mf
+sudo ../scrlink/scrlink.sh mediafetch/mediafetch.py mf
 # or using scrlink helper:
-sudo scrlink mediafetch mf
+sudo scrlink mediafetch/mediafetch.py mf
 ```
 
 ---
@@ -46,18 +55,30 @@ sudo scrlink mediafetch mf
 ## 📖 Usage Examples
 
 ```bash
-# Download video in 1080p (default video profile)
-mf "https://www.youtube.com/watch?v=..."
+# Clipboard Download (Copy a link, then run without pasting!)
+mf music
 
-# Download high-quality music MP3 with album art
+# Direct URL Download (High quality MP3 + album art + lyrics)
 mf music "https://www.youtube.com/watch?v=..."
 
-# Download podcast (Opus audio format)
+# Download Lossless FLAC + lyrics
+mf flac "https://www.youtube.com/watch?v=..."
+
+# Download 1080p MKV Video with English subtitles
+mf video "https://www.youtube.com/watch?v=..."
+
+# Download 1080p Vertical Video (YouTube Shorts / Reels)
+mf shorts "https://www.youtube.com/watch?v=..."
+
+# Download Podcast (Opus audio)
 mf podcast "https://www.youtube.com/watch?v=..."
 
-# Download maximum quality video with all subtitles
-mf archive "https://www.youtube.com/watch?v=..."
+# Launch Interactive TUI Menu
+mf -i
 
-# Inspect available formats only
+# Embed lyrics into existing local audio file
+mf lyrics /path/to/song.mp3
+
+# Inspect available stream formats only
 mf --list "https://www.youtube.com/watch?v=..."
 ```
