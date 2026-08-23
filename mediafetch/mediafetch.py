@@ -139,6 +139,51 @@ def clean_title(title: str) -> str:
     return title.strip()
 
 
+def cleanup_directory(target_dir_str: str = None):
+    """Recursively removes YouTube video IDs and title clutter from filenames and .lrc sidecars."""
+    if not target_dir_str:
+        target_dir = Path.home() / "Music"
+    else:
+        target_dir = Path(target_dir_str).expanduser().resolve()
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        print(f"{RED}[cleanup] Error: Directory not found: {target_dir}{RESET}", file=sys.stderr)
+        return False
+
+    print(f"\n{BOLD}{CYAN}🧹 Filename Cleanup Engine: Scanning {target_dir} ...{RESET}\n")
+
+    valid_extensions = {".mp3", ".flac", ".m4a", ".ogg", ".wav", ".lrc", ".webp", ".png", ".jpg"}
+    all_files = sorted([
+        f for f in target_dir.rglob("*")
+        if f.is_file() and f.suffix.lower() in valid_extensions
+    ])
+
+    if not all_files:
+        print(f"{YELLOW}[cleanup] No matching media or lyrics files found in: {target_dir}{RESET}\n")
+        return True
+
+    renamed_count = 0
+    for file_path in all_files:
+        old_stem = file_path.stem
+        cleaned_stem = clean_title(old_stem)
+        
+        if cleaned_stem and cleaned_stem != old_stem:
+            new_file_path = file_path.with_name(cleaned_stem + file_path.suffix)
+            if new_file_path.exists() and new_file_path != file_path:
+                print(f"  {YELLOW}⚠️  Skipped (Target exists): {file_path.name} -> {new_file_path.name}{RESET}")
+                continue
+            
+            try:
+                file_path.rename(new_file_path)
+                renamed_count += 1
+                print(f"  {GREEN}✔ Renamed:{RESET} {BOLD}{file_path.name}{RESET}\n    {CYAN}➜ {new_file_path.name}{RESET}")
+            except Exception as e:
+                print(f"  {RED}✖ Error renaming {file_path.name}: {e}{RESET}")
+
+    print(f"\n{BOLD}{GREEN}✨ Cleanup Complete! Renamed {renamed_count} file(s) in {target_dir}.{RESET}\n")
+    return True
+
+
 def parse_filename_metadata(filepath: Path):
     """Extracts fallback artist and title from filename."""
     stem = filepath.stem
@@ -508,6 +553,12 @@ def main():
         process_lyrics_target(args.embed_lyrics_file)
         sys.exit(0)
 
+    # Handle standalone 'cleanup' subcommand (e.g., mf cleanup or mf cleanup ~/Music/Downloads)
+    if args.profile_or_url == "cleanup":
+        target = args.urls[0] if args.urls else None
+        cleanup_directory(target)
+        sys.exit(0)
+
     # Handle standalone 'lyrics' subcommand (e.g., mf lyrics song.mp3 or mf lyrics ~/Music)
     if args.profile_or_url == "lyrics":
         targets = args.urls
@@ -541,6 +592,7 @@ def main():
         print("  -i, --interactive       Launch interactive prompt")
         print("  --list <URL>            Inspect available stream formats")
         print("  -o, --output-dir <PATH> Custom output directory (Defaults to ~/Downloads)")
+        print("  cleanup [DIR]           Remove YouTube IDs & clutter from filenames (Defaults to ~/Music)")
         print("  lyrics <FILE/DIR...>    Fetch & embed lyrics into local audio files or folder")
         print("  --update                Update yt-dlp")
         print("  -h, --help              Show this help banner")
