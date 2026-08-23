@@ -2,7 +2,7 @@
 """
 mediafetch (mf) - High-Performance Profile-Based Media Downloader & Tagging Pipeline
 
-Converts videos, music, podcasts, shorts, and archives using yt-dlp, aria2c, ffmpeg,
+Converts videos, music, audio, podcasts, shorts, and archives using yt-dlp, aria2c, ffmpeg,
 and LRCLIB lyrics tag embedding.
 """
 
@@ -15,6 +15,7 @@ import argparse
 import subprocess
 import urllib.request
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # ANSI Color Codes
@@ -40,16 +41,30 @@ CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "me
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "mediafetch"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-DEFAULT_VIDEO_DIR = Path.home() / "Videos" / "Downloads"
-DEFAULT_MUSIC_DIR = Path.home() / "Music" / "Downloads"
+# Both video and music default to ~/Downloads
+DEFAULT_DOWNLOAD_DIR = Path.home() / "Downloads"
 
 DEFAULT_CONFIG = {
     "aria2_connections": 8,
-    "video_dir": str(DEFAULT_VIDEO_DIR),
-    "music_dir": str(DEFAULT_MUSIC_DIR),
+    "download_dir": str(DEFAULT_DOWNLOAD_DIR),
+    "video_dir": str(DEFAULT_DOWNLOAD_DIR),
+    "music_dir": str(DEFAULT_DOWNLOAD_DIR),
     "embed_lyrics": True,
     "sub_langs": "en.*"
 }
+
+# Pre-compiled Regex Patterns for Title Sanitization
+YOUTUBE_ID_PATTERN = re.compile(r'\s*\[[a-zA-Z0-9_-]{11}\]$')
+CLUTTER_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r'\s*[\(\[](official\s*(music\s*)?(video|audio|visualizer|lyric\s*video|hd|4k|4k\s*remaster)?|lyrics?|audio|remastered|remaster\s*\d*|video)[\)\]]',
+        r'\s*[\(\[]ft\.?|\s*feat\.?.*[\)\]]',
+        r'\s*[\(\[]HD[\)\]]',
+        r'\s*[\(\[]HQ[\)\]]',
+        r'\s*[\(\[]4K[\)\]]',
+    ]
+]
+
 
 def load_config():
     """Loads config.json or initializes defaults if not present."""
@@ -65,7 +80,6 @@ def load_config():
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-            # Fill missing keys from default
             for k, v in DEFAULT_CONFIG.items():
                 if k not in cfg:
                     cfg[k] = v
@@ -89,7 +103,6 @@ def get_clipboard_url():
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
             if res.returncode == 0 and res.stdout:
                 text = res.stdout.strip()
-                # Simple URL validation regex
                 url_match = re.search(r'https?://[^\s"\'>]+', text)
                 if url_match:
                     return url_match.group(0)
@@ -101,10 +114,7 @@ def get_clipboard_url():
 def check_dependencies():
     """Verifies system dependencies for running mediafetch."""
     deps = ["yt-dlp", "ffmpeg"]
-    missing = []
-    for dep in deps:
-        if not shutil.which(dep):
-            missing.append(dep)
+    missing = [dep for dep in deps if not shutil.which(dep)]
     
     if missing:
         print(f"\n{RED}{BOLD}Error: Missing required system dependencies: {', '.join(missing)}{RESET}\n")
@@ -123,25 +133,17 @@ def check_dependencies():
 # ==============================================================================
 
 def clean_title(title: str) -> str:
-    """Removes noise and clutter common in YouTube video titles."""
-    title = re.sub(r'\s*\[[a-zA-Z0-9_-]{11}\]$', '', title)
-    patterns = [
-        r'\s*[\(\[](official\s*(music\s*)?(video|audio|visualizer|lyric\s*video|hd|4k|4k\s*remaster)?|lyrics?|audio|remastered|remaster\s*\d*|video)[\)\]]',
-        r'\s*[\(\[]ft\.?|\s*feat\.?.*[\)\]]',
-        r'\s*[\(\[]HD[\)\]]',
-        r'\s*[\(\[]HQ[\)\]]',
-        r'\s*[\(\[]4K[\)\]]',
-    ]
-    cleaned = title
-    for p in patterns:
-        cleaned = re.sub(p, '', cleaned, flags=re.IGNORECASE)
-    return cleaned.strip()
+    """Removes noise and clutter common in YouTube video titles using pre-compiled regex."""
+    title = YOUTUBE_ID_PATTERN.sub('', title)
+    for p in CLUTTER_PATTERNS:
+        title = p.sub('', title)
+    return title.strip()
 
 
 def parse_filename_metadata(filepath: Path):
     """Extracts fallback artist and title from filename."""
     stem = filepath.stem
-    stem = re.sub(r'\s*\[[a-zA-Z0-9_-]{11}\]$', '', stem)
+    stem = YOUTUBE_ID_PATTERN.sub('', stem)
     
     if " - " in stem:
         parts = stem.split(" - ", 1)
@@ -331,11 +333,22 @@ def process_lyrics_target(file_str: str):
 
         print(f"\n{BOLD}{CYAN}🎵 Batch Lyrics Engine: Found {len(audio_files)} audio track(s) in {filepath}{RESET}")
         success_count = 0
-        for idx, song_file in enumerate(audio_files, 1):
-            if _process_single_audio_file(song_file, idx, len(audio_files)):
-                success_count += 1
+        total_count = len(audio_files)
 
-        print(f"\n{BOLD}{GREEN}✨ Batch Complete! Successfully fetched & embedded lyrics for {success_count}/{len(audio_files)} track(s).{RESET}\n")
+        # Process batch concurrently with thread pool for faster performance
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_file = {
+                executor.submit(_process_single_audio_file, song_file, idx, total_count): song_file
+                for idx, song_file in enumerate(audio_files, 1)
+            }
+            for future in as_completed(future_to_file):
+                try:
+                    if future.result():
+                        success_count += 1
+                except Exception as e:
+                    print(f"{RED}[lyrics] Error processing track: {e}{RESET}", file=sys.stderr)
+
+        print(f"\n{BOLD}{GREEN}✨ Batch Complete! Successfully fetched & embedded lyrics for {success_count}/{total_count} track(s).{RESET}\n")
         return True
 
     return _process_single_audio_file(filepath)
@@ -424,6 +437,18 @@ PROFILES = {
     }
 }
 
+# Profile Aliases (e.g. 'audio' maps to 'music')
+PROFILE_ALIASES = {
+    "audio": "music"
+}
+
+
+def resolve_profile_name(name: str) -> str:
+    """Resolves profile aliases to canonical profile keys."""
+    if not name:
+        return "video"
+    return PROFILE_ALIASES.get(name.lower(), name.lower())
+
 
 def interactive_menu(config, clipboard_url=None):
     """Interactive TUI menu when run without arguments."""
@@ -436,7 +461,8 @@ def interactive_menu(config, clipboard_url=None):
     profile_keys = list(PROFILES.keys())
     for idx, key in enumerate(profile_keys, 1):
         prof = PROFILES[key]
-        print(f"  [{idx}] {BOLD}{key:<8}{RESET} - {prof['desc']}")
+        alias_str = " (alias: audio)" if key == "music" else ""
+        print(f"  [{idx}] {BOLD}{key:<8}{RESET}{alias_str} - {prof['desc']}")
     
     choice = input(f"\n{BOLD}Choose profile (1-{len(profile_keys)}, default=1): {RESET}").strip()
     selected_profile = profile_keys[0]
@@ -467,7 +493,7 @@ def main():
         add_help=False
     )
     
-    parser.add_argument("profile_or_url", nargs="?", help="Profile name or URL")
+    parser.add_argument("profile_or_url", nargs="?", help="Profile name (video, music, audio, etc.) or URL")
     parser.add_argument("urls", nargs="*", help="Additional URLs")
     parser.add_argument("--list", action="store_true", help="Inspect available video/audio streams (-F)")
     parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive menu")
@@ -483,11 +509,11 @@ def main():
         process_lyrics_target(args.embed_lyrics_file)
         sys.exit(0)
 
-    # Handle standalone 'lyrics' subcommand (e.g., mf lyrics song.mp3)
+    # Handle standalone 'lyrics' subcommand (e.g., mf lyrics song.mp3 or mf lyrics ~/Music)
     if args.profile_or_url == "lyrics":
         targets = args.urls
         if not targets:
-            print(f"{RED}Usage: mf lyrics <file1.mp3> [file2.flac ...]{RESET}")
+            print(f"{RED}Usage: mf lyrics <file1.mp3> [dir_or_file2 ...]{RESET}")
             sys.exit(1)
         for t in targets:
             process_lyrics_target(t)
@@ -510,21 +536,26 @@ def main():
         print("  mf [OPTIONS]")
         print(f"\n{BOLD}Profiles:{RESET}")
         for k, v in PROFILES.items():
-            print(f"  {BOLD}{k:<10}{RESET} {v['desc']}")
+            alias_str = " (or 'audio')" if k == "music" else ""
+            print(f"  {BOLD}{k:<10}{RESET}{alias_str:<12} {v['desc']}")
         print(f"\n{BOLD}Options:{RESET}")
         print("  -i, --interactive       Launch interactive prompt")
         print("  --list <URL>            Inspect available stream formats")
-        print("  -o, --output-dir <PATH> Custom output directory")
-        print("  lyrics <FILE...>        Fetch & embed lyrics into local audio files")
+        print("  -o, --output-dir <PATH> Custom output directory (Defaults to ~/Downloads)")
+        print("  lyrics <FILE/DIR...>    Fetch & embed lyrics into local audio files or folder")
         print("  --update                Update yt-dlp")
         print("  -h, --help              Show this help banner")
         print()
         sys.exit(0)
 
+    # Resolve potential profile alias (e.g. 'audio' -> 'music')
+    raw_profile = args.profile_or_url or ""
+    resolved_profile = resolve_profile_name(raw_profile)
+
     # Handle Format Stream List (--list)
     if args.list:
-        target_url = args.profile_or_url or (args.urls[0] if args.urls else None)
-        if not target_url or target_url in PROFILES:
+        target_url = raw_profile or (args.urls[0] if args.urls else None)
+        if not target_url or raw_profile in PROFILES or raw_profile in PROFILE_ALIASES:
             target_url = args.urls[0] if args.urls else None
         if not target_url:
             clip_url = get_clipboard_url()
@@ -544,33 +575,31 @@ def main():
     if args.interactive or (not args.profile_or_url and not args.urls):
         clip_url = get_clipboard_url()
         profile_name, urls, custom_out_dir = interactive_menu(config, clip_url)
-    elif args.profile_or_url in PROFILES:
-        profile_name = args.profile_or_url
+    elif raw_profile in PROFILES or raw_profile in PROFILE_ALIASES:
+        profile_name = resolved_profile
         urls = args.urls
-        # Check clipboard if no URLs passed explicitly with profile (e.g. 'mf music')
         if not urls:
             clip_url = get_clipboard_url()
             if clip_url:
                 print(f"{GREEN}📋 Auto-detected URL from clipboard: {BOLD}{clip_url}{RESET}")
                 urls = [clip_url]
             else:
-                print(f"{RED}Error: Profile '{profile_name}' specified but no URL provided or found in clipboard.{RESET}")
+                print(f"{RED}Error: Profile '{raw_profile}' specified but no URL provided or found in clipboard.{RESET}")
                 sys.exit(1)
     else:
         # User passed URL directly without specifying profile: e.g. mf "https://..."
         profile_name = "video"
-        urls = [args.profile_or_url] + args.urls
+        urls = [raw_profile] + args.urls
 
     profile = PROFILES[profile_name]
 
-    # Destination directory routing
+    # Destination directory routing (Defaults to ~/Downloads for both music and video)
     if custom_out_dir:
         target_dir = Path(custom_out_dir).expanduser().resolve()
     else:
-        if profile["type"] == "music":
-            target_dir = Path(config.get("music_dir", DEFAULT_MUSIC_DIR)).expanduser().resolve()
-        else:
-            target_dir = Path(config.get("video_dir", DEFAULT_VIDEO_DIR)).expanduser().resolve()
+        # Default destination is ~/Downloads for all downloads
+        default_dir = config.get("download_dir", DEFAULT_DOWNLOAD_DIR)
+        target_dir = Path(default_dir).expanduser().resolve()
 
     target_dir.mkdir(parents=True, exist_ok=True)
 
