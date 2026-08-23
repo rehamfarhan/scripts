@@ -304,10 +304,55 @@ def strip_lrc_timestamps(lrc_text: str) -> str:
     return "\n".join(clean_lines)
 
 
+def focus_hyprland_terminal():
+    """Brings the Hyprland terminal window into focus by switching to its workspace."""
+    if not shutil.which("hyprctl"):
+        return
+    try:
+        res = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=2)
+        if res.returncode != 0 or not res.stdout:
+            return
+        
+        clients = json.loads(res.stdout)
+        client_pids = {c.get("pid"): c for c in clients if c.get("pid")}
+
+        curr_pid = os.getpid()
+        target_client = None
+
+        while curr_pid and curr_pid > 1:
+            if curr_pid in client_pids:
+                target_client = client_pids[curr_pid]
+                break
+            try:
+                with open(f"/proc/{curr_pid}/stat", "r") as f:
+                    stat_content = f.read()
+                    parts = stat_content.split(")")
+                    if len(parts) >= 2:
+                        stat_fields = parts[-1].split()
+                        curr_pid = int(stat_fields[1])
+                    else:
+                        break
+            except Exception:
+                break
+
+        if target_client:
+            c_pid = target_client.get("pid")
+            ws_name = target_client.get("workspace", {}).get("name")
+            subprocess.run(["hyprctl", "dispatch", "focuswindow", f"pid:{c_pid}"], capture_output=True)
+            if ws_name:
+                subprocess.run(["hyprctl", "dispatch", "workspace", str(ws_name)], capture_output=True)
+    except Exception:
+        pass
+
+
 def select_with_fzf(items: list, prompt: str, timeout_sec: int = None) -> str:
     """Invokes fzf in a terminal subprocess with custom prompt and optional timeout."""
     if not items or not shutil.which("fzf"):
         return None
+
+    # Automatically focus Hyprland terminal window & workspace
+    focus_hyprland_terminal()
+
     try:
         cmd = ["fzf", "--prompt", f"{prompt} > ", "--height", "40%", "--border", "--ansi"]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
@@ -517,8 +562,8 @@ def _process_single_audio_file(filepath: Path, current_idx: int = 0, total_files
                     rel_map[str(f.name)] = f
             
             choices = ["[Skip / No Lyrics]"] + sorted(list(rel_map.keys()))
-            print(f"{CYAN}💡 Opening local .lrc fallback picker for '{filepath.name}' (auto-skips in 15s)...{RESET}")
-            sel = select_with_fzf(choices, f"Attach Local .lrc to '{filepath.name}'", timeout_sec=15)
+            print(f"{CYAN}💡 Opening local .lrc fallback picker for '{filepath.name}' (auto-skips in 5s)...{RESET}")
+            sel = select_with_fzf(choices, f"Attach Local .lrc to '{filepath.name}'", timeout_sec=5)
             if sel and sel in rel_map:
                 chosen_lrc = rel_map[sel]
                 return attach_unsynced_lyrics_from_lrc(filepath, chosen_lrc)
