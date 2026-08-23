@@ -41,14 +41,13 @@ CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "me
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "mediafetch"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-# Both video and music default to ~/Downloads
-DEFAULT_DOWNLOAD_DIR = Path.home() / "Downloads"
+DEFAULT_VIDEO_DIR = Path.home() / "Videos" / "Downloads"
+DEFAULT_MUSIC_DIR = Path.home() / "Music" / "Downloads"
 
 DEFAULT_CONFIG = {
     "aria2_connections": 8,
-    "download_dir": str(DEFAULT_DOWNLOAD_DIR),
-    "video_dir": str(DEFAULT_DOWNLOAD_DIR),
-    "music_dir": str(DEFAULT_DOWNLOAD_DIR),
+    "video_dir": str(DEFAULT_VIDEO_DIR),
+    "music_dir": str(DEFAULT_MUSIC_DIR),
     "embed_lyrics": True,
     "sub_langs": "en.*"
 }
@@ -593,13 +592,14 @@ def main():
 
     profile = PROFILES[profile_name]
 
-    # Destination directory routing (Defaults to ~/Downloads for both music and video)
+    # Destination directory routing
     if custom_out_dir:
         target_dir = Path(custom_out_dir).expanduser().resolve()
     else:
-        # Default destination is ~/Downloads for all downloads
-        default_dir = config.get("download_dir", DEFAULT_DOWNLOAD_DIR)
-        target_dir = Path(default_dir).expanduser().resolve()
+        if profile["type"] == "music":
+            target_dir = Path(config.get("music_dir", DEFAULT_MUSIC_DIR)).expanduser().resolve()
+        else:
+            target_dir = Path(config.get("video_dir", DEFAULT_VIDEO_DIR)).expanduser().resolve()
 
     target_dir.mkdir(parents=True, exist_ok=True)
 

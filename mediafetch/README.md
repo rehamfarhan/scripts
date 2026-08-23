@@ -10,7 +10,9 @@ A robust, high-performance standalone Python wrapper for `yt-dlp` configured wit
 - **Dependencies**: `yt-dlp`, `ffmpeg`, `aria2c` (optional), `python-mutagen` (optional)
 - **System Location**: `mediafetch/mediafetch.py`
 - **Target Command / Shorthand**: `mf`
-- **Default Download Destination**: `~/Downloads` (auto-creates directory via `mkdir -p` if missing)
+- **Default Destinations**:
+  - 🎵 Music & Audio (`music`, `audio`, `flac`, `podcast`): `~/Music/Downloads`
+  - 🎬 Videos (`video`, `shorts`, `archive`): `~/Videos/Downloads`
 - **Configuration File**: `~/.config/mediafetch/config.json`
 
 ---
@@ -19,7 +21,7 @@ A robust, high-performance standalone Python wrapper for `yt-dlp` configured wit
 
 - **Standalone Single-Executable Architecture**: Unified CLI downloader, interactive prompt, and LRCLIB lyrics tagger combined into one clean Python script.
 - **📋 Smart Clipboard Auto-Paste**: Running `mf music`, `mf audio`, `mf video`, etc. without entering a URL automatically reads media URLs from your system clipboard (`wl-paste`, `xclip`, `pbpaste`).
-- **📁 Default Downloads Folder**: All media downloads route by default to `~/Downloads` (customizable via `-o` / `--output-dir` or `~/.config/mediafetch/config.json`).
+- **📁 Default Downloads Folders**: Videos route to `~/Videos/Downloads` and audio/music to `~/Music/Downloads` (customizable via `-o` / `--output-dir` or `~/.config/mediafetch/config.json`).
 - **Smart Presets & Aliases**:
   - `video` (Default): 1080p H.265 MKV video, embeds PNG thumbnail, merges English subtitles (`en.*`).
   - `music` (alias: `audio`): High quality MP3 (VBR 0), square-cropped album art metadata, automated LRCLIB lyrics tagging (ID3 `USLT` tags), and `.lrc` companion sidecar file generation.
