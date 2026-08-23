@@ -271,6 +271,160 @@ def query_lrclib(title: str, artist: str = "", album: str = "", duration: float 
     return None
 
 
+def has_embedded_lyrics(filepath: Path) -> bool:
+    """Checks if an audio file already has embedded lyrics in ID3 USLT or FLAC tags."""
+    if not MUTAGEN_AVAILABLE or not filepath.is_file():
+        return False
+    ext = filepath.suffix.lower()
+    if ext == ".mp3":
+        try:
+            tags = ID3(filepath)
+            return "USLT" in tags or len(tags.getall("USLT")) > 0
+        except Exception:
+            return False
+    elif ext == ".flac":
+        try:
+            tags = FLAC(filepath)
+            return "LYRICS" in tags or "UNSYNCEDLYRICS" in tags
+        except Exception:
+            return False
+    return False
+
+
+def strip_lrc_timestamps(lrc_text: str) -> str:
+    """Strips [mm:ss.xx] timestamps and metadata tags from LRC content."""
+    lines = lrc_text.splitlines()
+    clean_lines = []
+    for line in lines:
+        if re.match(r'^\s*\[[a-zA-Z]+:', line):
+            continue
+        cleaned = re.sub(r'\[\d{2,}:\d{2}(?:\.\d{1,3})?\]', '', line).strip()
+        if cleaned:
+            clean_lines.append(cleaned)
+    return "\n".join(clean_lines)
+
+
+def select_with_fzf(items: list, prompt: str, timeout_sec: int = None) -> str:
+    """Invokes fzf in a terminal subprocess with custom prompt and optional timeout."""
+    if not items or not shutil.which("fzf"):
+        return None
+    try:
+        cmd = ["fzf", "--prompt", f"{prompt} > ", "--height", "40%", "--border", "--ansi"]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        stdout, _ = proc.communicate(input="\n".join(items), timeout=timeout_sec)
+        if proc.returncode == 0 and stdout:
+            res = stdout.strip()
+            if res.startswith("[Skip") or res == "":
+                return None
+            return res
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        print(f"\n{YELLOW}[fzf] Selection timed out ({timeout_sec}s). Skipping.{RESET}")
+    except Exception:
+        pass
+    return None
+
+
+def attach_unsynced_lyrics_from_lrc(audio_path: Path, lrc_path: Path) -> bool:
+    """Reads lrc file, strips timestamps, and embeds unsynchronized lyrics into metadata ONLY (no sidecar)."""
+    try:
+        with open(lrc_path, "r", encoding="utf-8", errors="ignore") as f:
+            raw_content = f.read()
+        
+        clean_text = strip_lrc_timestamps(raw_content)
+        if not clean_text:
+            print(f"{YELLOW}[attach] Warning: No readable lyrics text in {lrc_path.name}{RESET}", file=sys.stderr)
+            return False
+
+        if MUTAGEN_AVAILABLE:
+            ext = audio_path.suffix.lower()
+            if ext == ".mp3":
+                try:
+                    try:
+                        audio = ID3(audio_path)
+                    except ID3NoHeaderError:
+                        audio = ID3()
+                    audio.delall("USLT")
+                    audio.add(USLT(encoding=Encoding.UTF8, lang="eng", desc="", text=clean_text))
+                    audio.save(audio_path)
+                    print(f"{GREEN}✔ Successfully attached unsynchronized lyrics into ID3 tag for: {audio_path.name}{RESET}")
+                    return True
+                except Exception as e:
+                    print(f"{RED}[attach] Error embedding ID3 tag: {e}{RESET}", file=sys.stderr)
+            elif ext == ".flac":
+                try:
+                    audio = FLAC(audio_path)
+                    audio["LYRICS"] = clean_text
+                    audio["UNSYNCEDLYRICS"] = clean_text
+                    audio.save()
+                    print(f"{GREEN}✔ Successfully attached unsynchronized lyrics into FLAC tag for: {audio_path.name}{RESET}")
+                    return True
+                except Exception as e:
+                    print(f"{RED}[attach] Error embedding FLAC tags: {e}{RESET}", file=sys.stderr)
+    except Exception as e:
+        print(f"{RED}[attach] Error reading LRC file: {e}{RESET}", file=sys.stderr)
+    return False
+
+
+def attach_lyrics_interactive(target_dir_str: str = None):
+    """Two-step interactive fzf lyrics attachment menu (only shows untagged audio files)."""
+    if not target_dir_str:
+        target_dir = Path.home() / "Music"
+    else:
+        target_dir = Path(target_dir_str).expanduser().resolve()
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        print(f"{RED}[attach] Error: Directory not found: {target_dir}{RESET}", file=sys.stderr)
+        return False
+
+    print(f"\n{BOLD}{CYAN}📎 Interactive Lyrics Attachment: Scanning {target_dir} ...{RESET}\n")
+
+    audio_exts = {".mp3", ".flac", ".m4a", ".ogg", ".wav"}
+    all_audio = sorted([
+        f for f in target_dir.rglob("*")
+        if f.is_file() and f.suffix.lower() in audio_exts
+    ])
+
+    # Step 1: Filter for untagged audio files (files without embedded lyrics)
+    untagged_audio = [f for f in all_audio if not has_embedded_lyrics(f)]
+    if not untagged_audio:
+        print(f"{GREEN}✔ All {len(all_audio)} audio file(s) in {target_dir} already have embedded lyrics!{RESET}\n")
+        return True
+
+    # Build relative paths for fzf menu display
+    rel_audio_map = {str(f.relative_to(target_dir)): f for f in untagged_audio}
+    audio_choices = sorted(list(rel_audio_map.keys()))
+
+    print(f"{CYAN}Step 1: Select untagged audio file ({len(untagged_audio)} untagged / {len(all_audio)} total)...{RESET}")
+    selected_rel_audio = select_with_fzf(audio_choices, "Step 1: Choose Audio Track to Attach Lyrics To")
+    if not selected_rel_audio:
+        print(f"{YELLOW}No audio file selected. Exiting.{RESET}")
+        return False
+
+    target_audio = rel_audio_map[selected_rel_audio]
+
+    # Step 2: Select local .lrc file
+    lrc_files = sorted([
+        f for f in target_dir.rglob("*.lrc")
+        if f.is_file()
+    ])
+    if not lrc_files:
+        print(f"{YELLOW}[attach] No local .lrc files found in library {target_dir}{RESET}")
+        return False
+
+    rel_lrc_map = {str(f.relative_to(target_dir)): f for f in lrc_files}
+    lrc_choices = sorted(list(rel_lrc_map.keys()))
+
+    print(f"{CYAN}Step 2: Select local .lrc file to attach to {target_audio.name}...{RESET}")
+    selected_rel_lrc = select_with_fzf(lrc_choices, f"Step 2: Choose .lrc File for '{target_audio.name}'")
+    if not selected_rel_lrc:
+        print(f"{YELLOW}No lyrics file selected. Exiting.{RESET}")
+        return False
+
+    target_lrc = rel_lrc_map[selected_rel_lrc]
+    return attach_unsynced_lyrics_from_lrc(target_audio, target_lrc)
+
+
 def embed_lyrics_in_file(filepath: Path, plain_lyrics: str, synced_lyrics: str):
     """Embeds lyrics into audio metadata (ID3 USLT / FLAC tags) & generates .lrc sidecar."""
     lyrics_content = synced_lyrics if synced_lyrics else plain_lyrics
@@ -345,7 +499,30 @@ def _process_single_audio_file(filepath: Path, current_idx: int = 0, total_files
 
     data = query_lrclib(title, artist, album, duration)
     if not data:
-        print(f"{YELLOW}[lyrics] No lyrics found on LRCLIB for: {display_name}{RESET}")
+        print(f"{YELLOW}[lyrics] No online lyrics found on LRCLIB for: {display_name}{RESET}")
+        
+        # Local .lrc fallback selector via fzf
+        music_library_dir = Path.home() / "Music"
+        search_dir = filepath.parent if filepath.parent.exists() else music_library_dir
+        lrc_files = sorted([f for f in search_dir.rglob("*.lrc") if f.is_file()])
+        if not lrc_files and music_library_dir.exists():
+            lrc_files = sorted([f for f in music_library_dir.rglob("*.lrc") if f.is_file()])
+
+        if lrc_files and shutil.which("fzf"):
+            rel_map = {}
+            for f in lrc_files:
+                try:
+                    rel_map[str(f.relative_to(music_library_dir))] = f
+                except Exception:
+                    rel_map[str(f.name)] = f
+            
+            choices = ["[Skip / No Lyrics]"] + sorted(list(rel_map.keys()))
+            print(f"{CYAN}💡 Opening local .lrc fallback picker for '{filepath.name}' (auto-skips in 15s)...{RESET}")
+            sel = select_with_fzf(choices, f"Attach Local .lrc to '{filepath.name}'", timeout_sec=15)
+            if sel and sel in rel_map:
+                chosen_lrc = rel_map[sel]
+                return attach_unsynced_lyrics_from_lrc(filepath, chosen_lrc)
+
         return False
 
     synced = data.get("syncedLyrics") or ""
@@ -553,6 +730,12 @@ def main():
         process_lyrics_target(args.embed_lyrics_file)
         sys.exit(0)
 
+    # Handle standalone 'attach' subcommand (e.g., mf attach or mf attach ~/Music)
+    if args.profile_or_url == "attach":
+        target = args.urls[0] if args.urls else None
+        attach_lyrics_interactive(target)
+        sys.exit(0)
+
     # Handle standalone 'cleanup' subcommand (e.g., mf cleanup or mf cleanup ~/Music/Downloads)
     if args.profile_or_url == "cleanup":
         target = args.urls[0] if args.urls else None
@@ -592,6 +775,7 @@ def main():
         print("  -i, --interactive       Launch interactive prompt")
         print("  --list <URL>            Inspect available stream formats")
         print("  -o, --output-dir <PATH> Custom output directory (Defaults to ~/Downloads)")
+        print("  attach [DIR]            Interactive fzf picker to attach lyrics to untagged audio")
         print("  cleanup [DIR]           Remove YouTube IDs & clutter from filenames (Defaults to ~/Music)")
         print("  lyrics <FILE/DIR...>    Fetch & embed lyrics into local audio files or folder")
         print("  --update                Update yt-dlp")
