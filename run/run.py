@@ -372,6 +372,8 @@ def create_launcher_script(
     sdl_driver = opts.get("sdl_driver")
     if sdl_driver and sdl_driver in ("x11", "wayland"):
         lines.append(f'export SDL_VIDEODRIVER="{sdl_driver}"')
+    else:
+        lines.append('if [[ "$SDL_VIDEODRIVER" == *","* ]]; then unset SDL_VIDEODRIVER SDL_VIDEO_DRIVER; fi')
 
     if is_windows:
         if wine_prefix:
@@ -527,11 +529,19 @@ def launch_game_attached(games_root: Path, folder_key: str, script_path: Path) -
     start_time = time.time()
     iso_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+    # Clean up environment if bad multi-driver strings are present
+    game_env = os.environ.copy()
+    if "," in game_env.get("SDL_VIDEODRIVER", ""):
+        del game_env["SDL_VIDEODRIVER"]
+    if "," in game_env.get("SDL_VIDEO_DRIVER", ""):
+        del game_env["SDL_VIDEO_DRIVER"]
+
     proc = None
     try:
         proc = subprocess.Popen(
             [str(script_path.resolve())],
             cwd=script_path.parent,
+            env=game_env,
         )
         proc.wait()
     except KeyboardInterrupt:
