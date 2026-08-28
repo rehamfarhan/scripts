@@ -430,6 +430,43 @@ Comment=Launched via Python Game Launcher
 
 COLOR_MAGENTA = "\033[35m"
 
+import unicodedata
+
+try:
+    from wcwidth import wcswidth
+    def vw(s: str) -> int:
+        plain = re.sub(r'\033\[[0-9;]*m', '', s)
+        w = wcswidth(plain)
+        return w if w is not None and w >= 0 else len(plain)
+except ImportError:
+    def vw(s: str) -> int:
+        plain = re.sub(r'\033\[[0-9;]*m', '', s)
+        width = 0
+        for ch in plain:
+            if unicodedata.east_asian_width(ch) in ('F', 'W'):
+                width += 2
+            else:
+                width += 1
+        return width
+
+
+def pad_to(s: str, width: int) -> str:
+    """Pad string s with trailing spaces so its visual terminal width reaches width."""
+    return s + " " * max(0, width - vw(s))
+
+
+def truncate_vw(s: str, max_width: int, ellipsis: str = "…") -> str:
+    """Truncate string s to max_width visual width."""
+    if vw(s) <= max_width:
+        return s
+    out = ""
+    budget = max_width - vw(ellipsis)
+    for ch in s:
+        if vw(out) + vw(ch) > budget:
+            break
+        out += ch
+    return out + ellipsis
+
 
 def fetch_online_quote() -> str:
     """Fetch random quote from online API with fast 1.5s timeout and offline fallback."""
@@ -483,36 +520,78 @@ def render_post_game_recap(
     play_count: int,
     rating: int,
 ) -> None:
-    """Render centered, color-coded post-game session recap card spanning full terminal width."""
+    """Render centered, color-coded post-game session recap card matching fzf rounded border styling."""
     import textwrap
 
     clear_screen()
 
-    stars = "⭐" * rating if rating > 0 else "Unrated"
+    # 5-star scale representation
+    if rating > 0:
+        stars_formatted = f"{COLOR_YELLOW}{'★' * rating}{COLOR_GREY}{'☆' * (5 - rating)}{COLOR_RESET}"
+    else:
+        stars_formatted = f"{COLOR_GREY}Unrated{COLOR_RESET}"
+
     sess_str = format_session_duration(session_sec)
     tot_str = format_playtime(total_sec) or "0m"
     quote = fetch_online_quote()
 
     term_cols, term_rows = shutil.get_terminal_size((80, 24))
-    w = max(40, term_cols - 2)
-    dash = "─" * max(10, w - 4)
-    line_sep = "─" * w
+    inner_width = max(40, term_cols - 8)
 
-    wrapped_quote = textwrap.wrap(quote, width=max(30, w - 8))
+    top_line = f"{COLOR_CYAN}✨ ╭{'─' * inner_width}╮{COLOR_RESET}"
+    divider = f"{COLOR_CYAN}   ├{'─' * inner_width}┤{COLOR_RESET}"
+    bottom_line = f"{COLOR_CYAN}   ╰{'─' * inner_width}╯ ✨{COLOR_RESET}"
+
+    # Row 1: Header
+    header_prefix = f"   🎮 {COLOR_BOLD}{COLOR_YELLOW}GAME SESSION RECAP:{COLOR_RESET} {COLOR_BOLD}"
+    header_prefix_plain = "   🎮 GAME SESSION RECAP: "
+    max_title_w = inner_width - vw(header_prefix_plain) - 2
+    truncated_title = truncate_vw(game_name, max_title_w)
+    header_content = f"{header_prefix}{truncated_title}{COLOR_RESET}"
+    row1 = f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(header_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
+
+    # Row 2-4: Stats
+    label_w = 26
+    lbl1 = "   ⏱️  Session Duration"
+    lbl2 = "   ⌛ Total Playtime"
+    lbl3 = "   ⭐ Rating"
+
+    val1 = f"{COLOR_GREEN}{sess_str}{COLOR_RESET}"
+    row2_content = f"{pad_to(lbl1, label_w)}{val1}"
+    row2 = f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(row2_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
+
+    val2 = f"{COLOR_CYAN}{tot_str}{COLOR_RESET}   {COLOR_GREY}(Session #{play_count}){COLOR_RESET}"
+    row3_content = f"{pad_to(lbl2, label_w)}{val2}"
+    row3 = f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(row3_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
+
+    row4_content = f"{pad_to(lbl3, label_w)}{stars_formatted}"
+    row4 = f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(row4_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
+
+    # Quote section
+    quote_prefix = "   💬 "
+    quote_indent = "      "
+    quote_max_w = inner_width - vw(quote_prefix) - 2
+
+    wrapped_quote = textwrap.wrap(quote, width=quote_max_w)
+    quote_rows = []
+    for idx, ql in enumerate(wrapped_quote):
+        if idx == 0:
+            content = f"{quote_prefix}{COLOR_MAGENTA}{ql}{COLOR_RESET}"
+        else:
+            content = f"{quote_indent}{COLOR_MAGENTA}{ql}{COLOR_RESET}"
+        quote_rows.append(f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}")
 
     box_lines = [
-        f"{COLOR_CYAN}✨ {dash} ✨{COLOR_RESET}",
-        f"  🎮 {COLOR_BOLD}{COLOR_YELLOW}GAME SESSION RECAP:{COLOR_RESET} {COLOR_BOLD}{game_name}{COLOR_RESET}",
-        f"{COLOR_CYAN}✨ {dash} ✨{COLOR_RESET}",
-        f"  ⏱️  {COLOR_BOLD}Session Duration:{COLOR_RESET}  {COLOR_GREEN}{sess_str}{COLOR_RESET}",
-        f"  ⌛ {COLOR_BOLD}Total Playtime:{COLOR_RESET}    {COLOR_CYAN}{tot_str}{COLOR_RESET} (Session #{play_count})",
-        f"  ⭐ {COLOR_BOLD}Rating:{COLOR_RESET}            {stars}",
-        f"{COLOR_CYAN}{line_sep}{COLOR_RESET}",
-        f"  💬 {COLOR_BOLD}{COLOR_MAGENTA}Quote:{COLOR_RESET}",
+        top_line,
+        row1,
+        divider,
+        row2,
+        row3,
+        row4,
+        divider,
+    ] + quote_rows + [
+        bottom_line,
     ]
-    for ql in wrapped_quote:
-        box_lines.append(f"     {COLOR_MAGENTA}{ql}{COLOR_RESET}")
-    box_lines.append(f"{COLOR_CYAN}✨ {dash} ✨{COLOR_RESET}")
 
     box_height = len(box_lines)
     top_pad = max(0, (term_rows - box_height) // 2)
