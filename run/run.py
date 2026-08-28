@@ -536,39 +536,42 @@ def render_post_game_recap(
     quote = fetch_online_quote()
 
     term_cols, term_rows = shutil.get_terminal_size((80, 24))
-    inner_width = max(40, term_cols - 8)
+    card_width = min(max(44, term_cols - 4), 72)
+    inner_width = card_width - 2
+    left_pad = max(0, (term_cols - card_width) // 2)
+    p_str = " " * left_pad
 
-    top_line = f"{COLOR_CYAN}✨ ╭{'─' * inner_width}╮{COLOR_RESET}"
-    divider = f"{COLOR_CYAN}   ├{'─' * inner_width}┤{COLOR_RESET}"
-    bottom_line = f"{COLOR_CYAN}   ╰{'─' * inner_width}╯ ✨{COLOR_RESET}"
+    top_line = f"{p_str}{COLOR_CYAN}╭{'─' * inner_width}╮{COLOR_RESET}"
+    divider = f"{p_str}{COLOR_CYAN}├{'─' * inner_width}┤{COLOR_RESET}"
+    bottom_line = f"{p_str}{COLOR_CYAN}╰{'─' * inner_width}╯{COLOR_RESET}"
 
     # Row 1: Header
-    header_prefix = f"   🎮 {COLOR_BOLD}{COLOR_YELLOW}GAME SESSION RECAP:{COLOR_RESET} {COLOR_BOLD}"
-    header_prefix_plain = "   🎮 GAME SESSION RECAP: "
-    max_title_w = inner_width - vw(header_prefix_plain) - 2
+    hdr_prefix = f"  🎮 {COLOR_BOLD}{COLOR_YELLOW}GAME SESSION RECAP:{COLOR_RESET} {COLOR_BOLD}"
+    hdr_prefix_plain = "  🎮 GAME SESSION RECAP: "
+    max_title_w = inner_width - vw(hdr_prefix_plain) - 2
     truncated_title = truncate_vw(game_name, max_title_w)
-    header_content = f"{header_prefix}{truncated_title}{COLOR_RESET}"
-    row1 = f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(header_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
+    header_content = f"{hdr_prefix}{truncated_title}{COLOR_RESET}"
+    row1 = f"{p_str}{COLOR_CYAN}│{COLOR_RESET}{pad_to(header_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
 
     # Row 2-4: Stats
-    label_w = 26
-    lbl1 = "   ⏱️  Session Duration"
-    lbl2 = "   ⌛ Total Playtime"
-    lbl3 = "   ⭐ Rating"
+    label_w = 25
+    lbl1 = "  🕒  Session Duration"
+    lbl2 = "  ⌛  Total Playtime"
+    lbl3 = "  ⭐  Rating"
 
     val1 = f"{COLOR_GREEN}{sess_str}{COLOR_RESET}"
     row2_content = f"{pad_to(lbl1, label_w)}{val1}"
-    row2 = f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(row2_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
+    row2 = f"{p_str}{COLOR_CYAN}│{COLOR_RESET}{pad_to(row2_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
 
     val2 = f"{COLOR_CYAN}{tot_str}{COLOR_RESET}   {COLOR_GREY}(Session #{play_count}){COLOR_RESET}"
     row3_content = f"{pad_to(lbl2, label_w)}{val2}"
-    row3 = f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(row3_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
+    row3 = f"{p_str}{COLOR_CYAN}│{COLOR_RESET}{pad_to(row3_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
 
     row4_content = f"{pad_to(lbl3, label_w)}{stars_formatted}"
-    row4 = f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(row4_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
+    row4 = f"{p_str}{COLOR_CYAN}│{COLOR_RESET}{pad_to(row4_content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}"
 
     # Quote section
-    quote_prefix = "   💬 "
+    quote_prefix = "  💬  "
     quote_indent = "      "
     quote_max_w = inner_width - vw(quote_prefix) - 2
 
@@ -579,7 +582,7 @@ def render_post_game_recap(
             content = f"{quote_prefix}{COLOR_MAGENTA}{ql}{COLOR_RESET}"
         else:
             content = f"{quote_indent}{COLOR_MAGENTA}{ql}{COLOR_RESET}"
-        quote_rows.append(f"{COLOR_CYAN}   │{COLOR_RESET}{pad_to(content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}")
+        quote_rows.append(f"{p_str}{COLOR_CYAN}│{COLOR_RESET}{pad_to(content, inner_width)}{COLOR_CYAN}│{COLOR_RESET}")
 
     box_lines = [
         top_line,
