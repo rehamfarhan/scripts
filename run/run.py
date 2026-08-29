@@ -378,10 +378,26 @@ def create_launcher_script(
         'cd "$(dirname "$0")"',
     ]
 
+    # Key Remapping Patch (keyd)
+    keyd_remap = opts.get("keyd_remap")
+    if keyd_remap:
+        lines.append("")
+        lines.append("# Keyboard Patch (keyd)")
+        lines.append("if command -v keyd >/dev/null 2>&1; then")
+        lines.append(f'    keyd bind "{keyd_remap}" >/dev/null 2>&1 || true')
+        lines.append("    cleanup_keys() {")
+        lines.append("        keyd reload >/dev/null 2>&1 || true")
+        lines.append("    }")
+        lines.append("    trap cleanup_keys EXIT INT TERM")
+        lines.append("fi")
+        lines.append("")
+
     # Optional SDL_VIDEODRIVER override (only if explicitly set in game opts)
     sdl_driver = opts.get("sdl_driver")
     if sdl_driver and sdl_driver in ("x11", "wayland"):
         lines.append(f'export SDL_VIDEODRIVER="{sdl_driver}"')
+
+    exec_prefix = "" if keyd_remap else "exec "
 
     if is_windows:
         if wine_prefix:
@@ -394,11 +410,11 @@ def create_launcher_script(
         res = opts.get("resolution")
         safe_title = re.sub(r'[^a-zA-Z0-9]', '_', display_name)
         if res:
-            lines.append(f'wine explorer /desktop={safe_title},{res} "{rel_binary}" "$@"')
+            lines.append(f'{exec_prefix}wine explorer /desktop={safe_title},{res} "{rel_binary}" "$@"')
         else:
-            lines.append(f'wine "{rel_binary}" "$@"')
+            lines.append(f'{exec_prefix}wine "{rel_binary}" "$@"')
     else:
-        lines.append(f'exec "./{rel_binary}" "$@"')
+        lines.append(f'{exec_prefix}"./{rel_binary}" "$@"')
 
     script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     script_path.chmod(0o755)
@@ -666,6 +682,13 @@ def launch_game_attached(games_root: Path, folder_key: str, script_path: Path) -
                     pass
     except Exception as e:
         print(f"Error executing game: {e}", file=sys.stderr)
+    finally:
+        # Safety net: restore default keyd bindings if a keyboard patch was active
+        if (game_info.get("wine_opts") or {}).get("keyd_remap"):
+            try:
+                subprocess.run(["keyd", "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
     elapsed_seconds = max(0, int(time.time() - start_time))
 
@@ -987,6 +1010,7 @@ def show_utilities_menu(
         "✏️ Rename Game Entry",
         "⭐ Rate Game (0 - 5 Stars)",
         "⚙️ Execution & Video Driver Settings",
+        "⌨️ Keyboard Patches (keyd)",
         "🛠️ Change Main Executable Binary",
         "📝 Edit Launcher Script ($EDITOR)",
         "🖥️ Create / Recreate Desktop Shortcut",
@@ -1056,6 +1080,53 @@ def show_utilities_menu(
         )
         save_registry(games_root, registry)
         return f"{COLOR_GREEN}✓ Updated execution settings for '{g_name}'{COLOR_RESET}"
+
+    elif "Keyboard Patches" in ans:
+        current_remap = (game_info.get("wine_opts") or {}).get("keyd_remap") or "None"
+        patch_options = [
+            "1) None / Disabled [Default]",
+            "2) Map Left Shift -> Left Ctrl (leftshift=leftcontrol)",
+            "3) Custom keyd binding...",
+        ]
+        clear_screen()
+        ans_kp, _, _ = run_fzf(
+            patch_options,
+            prompt="Select Keyboard Patch: ",
+            header=f"Current: {current_remap}\nRemaps keys in-game and restores defaults automatically on exit.",
+            border_label=f"⌨️ Keyboard Patches ({g_name})",
+        )
+        if not ans_kp:
+            return None
+
+        keyd_remap = None
+        if "Left Shift -> Left Ctrl" in ans_kp:
+            keyd_remap = "leftshift=leftcontrol"
+        elif "Custom keyd" in ans_kp:
+            clear_screen()
+            print(f"{COLOR_BOLD}──────────────────────────────────────────────────{COLOR_RESET}")
+            print(f"⌨️  {COLOR_BOLD}Custom keyd Binding for:{COLOR_RESET} {g_name}")
+            print(f"💡 {COLOR_BOLD}Example:{COLOR_RESET} leftshift=leftcontrol")
+            print(f"{COLOR_BOLD}──────────────────────────────────────────────────{COLOR_RESET}\n")
+            custom_input = input("Enter keyd binding [or press ENTER to cancel]: ").strip()
+            if custom_input:
+                keyd_remap = custom_input
+
+        if "wine_opts" not in game_info or not isinstance(game_info["wine_opts"], dict):
+            game_info["wine_opts"] = {}
+        game_info["wine_opts"]["keyd_remap"] = keyd_remap
+
+        folder_path = games_root / folder_key
+        create_launcher_script(
+            folder_path,
+            Path(game_info["binary"]),
+            g_name,
+            game_info.get("is_windows", False),
+            Path(game_info["wine_prefix"]) if game_info.get("wine_prefix") else None,
+            game_info["wine_opts"],
+        )
+        save_registry(games_root, registry)
+        status_msg = keyd_remap if keyd_remap else "Disabled"
+        return f"{COLOR_GREEN}✓ Set keyboard patch for '{g_name}' to: {status_msg}{COLOR_RESET}"
 
     elif "Change Main Executable" in ans:
         folder_path = games_root / folder_key
