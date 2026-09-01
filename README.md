@@ -18,6 +18,7 @@ Each utility is organized into its own standalone directory containing the execu
 | [**`rng/`**](rng/) | `rng` | Python 3 | Interactive terminal random number generator with bound inclusion/exclusion options, float precision, and live keypress rolling. |
 | [**`mkrofi/`**](mkrofi/) | `mkrofi` | Bash | Interactive `.desktop` application entry creator to register custom terminal commands in Rofi / dmenu menus. |
 | [**`barr/`**](barr/) | `barr` | Bash | Safe restarter script for Waybar to cleanly reload status bar configurations without disrupting desktop sessions. |
+| [**`keydmgr/`**](keydmgr/) | `keydmgr` | Python 3 | Intelligent terminal manager & interactive configurator for `keyd` with AST parsing, pre-flight validation, and safe sudo staging. |
 | [**`scrlink/`**](scrlink/) | `scrlink` | Bash | Intelligent helper tool to symlink scripts to `/usr/local/bin`, featuring `fzf` selection and automatic folder migration. |
 
 ---
