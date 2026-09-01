@@ -16,6 +16,7 @@ Each utility is organized into its own standalone directory containing the execu
 | [**`ddlclauncher/`**](ddlclauncher/) | `ddlclauncher` | Bash | Interactive DDLC mod manager featuring thematic `fzf` UI, automatic scanner, launcher creator, and executable detection. |
 | [**`morsegen/`**](morsegen/) | `morsegen` | Python 3 | Bi-directional Morse code encoder and decoder with custom symbol support and distinct character validation. |
 | [**`rng/`**](rng/) | `rng` | Python 3 | Interactive terminal random number generator with bound inclusion/exclusion options, float precision, and live keypress rolling. |
+| [**`rngname/`**](rngname/) | `rngname` | Python 3 | Collision-proof random picture renamer for wallpaper and image directories with dry-run and recursive support. |
 | [**`mkrofi/`**](mkrofi/) | `mkrofi` | Bash | Interactive `.desktop` application entry creator to register custom terminal commands in Rofi / dmenu menus. |
 | [**`barr/`**](barr/) | `barr` | Bash | Safe restarter script for Waybar to cleanly reload status bar configurations without disrupting desktop sessions. |
 | [**`keydmgr/`**](keydmgr/) | `keydmgr` | Python 3 | Intelligent terminal manager & interactive configurator for `keyd` with AST parsing, pre-flight validation, and safe sudo staging. |
