@@ -336,35 +336,36 @@ def focus_hyprland_terminal():
                 break
 
         if target_client:
+            address = target_client.get("address")
             c_pid = target_client.get("pid")
             ws_name = target_client.get("workspace", {}).get("name")
-            subprocess.run(["hyprctl", "dispatch", "focuswindow", f"pid:{c_pid}"], capture_output=True)
-            if ws_name:
+            if ws_name is not None:
                 subprocess.run(["hyprctl", "dispatch", "workspace", str(ws_name)], capture_output=True)
+            if address:
+                subprocess.run(["hyprctl", "dispatch", "focuswindow", f"address:{address}"], capture_output=True)
+            elif c_pid:
+                subprocess.run(["hyprctl", "dispatch", "focuswindow", f"pid:{c_pid}"], capture_output=True)
     except Exception:
         pass
 
 
-def select_with_fzf(items: list, prompt: str, timeout_sec: int = None) -> str:
-    """Invokes fzf in a terminal subprocess with custom prompt and optional timeout."""
+def select_with_fzf(items: list, prompt: str) -> str:
+    """Invokes fzf in a terminal subprocess with custom prompt without timing out."""
     if not items or not shutil.which("fzf"):
         return None
 
-    # Automatically focus Hyprland terminal window & workspace
+    # Automatically switch Hyprland workspace & focus terminal window
     focus_hyprland_terminal()
 
     try:
         cmd = ["fzf", "--prompt", f"{prompt} > ", "--height", "40%", "--border", "--ansi"]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        stdout, _ = proc.communicate(input="\n".join(items), timeout=timeout_sec)
+        stdout, _ = proc.communicate(input="\n".join(items))
         if proc.returncode == 0 and stdout:
             res = stdout.strip()
             if res.startswith("[Skip") or res == "":
                 return None
             return res
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        print(f"\n{YELLOW}[fzf] Selection timed out ({timeout_sec}s). Skipping.{RESET}")
     except Exception:
         pass
     return None
@@ -562,8 +563,8 @@ def _process_single_audio_file(filepath: Path, current_idx: int = 0, total_files
                     rel_map[str(f.name)] = f
             
             choices = ["[Skip / No Lyrics]"] + sorted(list(rel_map.keys()))
-            print(f"{CYAN}💡 Opening local .lrc fallback picker for '{filepath.name}' (auto-skips in 5s)...{RESET}")
-            sel = select_with_fzf(choices, f"Attach Local .lrc to '{filepath.name}'", timeout_sec=5)
+            print(f"{CYAN}💡 Opening local .lrc fallback picker for '{filepath.name}'...{RESET}")
+            sel = select_with_fzf(choices, f"Attach Local .lrc to '{filepath.name}'")
             if sel and sel in rel_map:
                 chosen_lrc = rel_map[sel]
                 return attach_unsynced_lyrics_from_lrc(filepath, chosen_lrc)

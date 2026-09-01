@@ -34,7 +34,7 @@ A robust, high-performance standalone Python wrapper for `yt-dlp` configured wit
   - Embeds unsynchronized lyrics directly into MP3 ID3v2 `USLT` frames and FLAC Vorbis comments for universal player compatibility (VLC, Lollypop, Amberol, Foobar2000, etc.).
   - Generates synchronized `.lrc` sidecar files for terminal players (`kew`, `cmus`).
 - **🎵 Folder & File Lyrics Tagging**: Command `mf lyrics ~/Music` or `mf lyrics track.mp3` to fetch and embed lyrics for local files or whole directories concurrently.
-- **📎 Interactive Lyrics Attachment**: Command `mf attach` launches a 2-step `fzf` picker to attach local `.lrc` files to untagged audio tracks. Strips timestamps to embed clean unsynchronized lyrics without sidecar clutter. Auto-triggers with a 15s timeout during downloads if LRCLIB returns no online lyrics.
+- **📎 Interactive Lyrics Attachment**: Command `mf attach` launches a 2-step `fzf` picker to attach local `.lrc` files to untagged audio tracks. Strips timestamps to embed clean unsynchronized lyrics without sidecar clutter. Auto-triggers during downloads if LRCLIB returns no online lyrics and automatically focuses your Hyprland terminal workspace.
 - **🧹 Filename Cleanup Engine**: Command `mf cleanup` or `mf cleanup /path/to/dir` recursively strips YouTube ID tags (e.g. `[kohSdJPaWLA]`) and video clutter (`[Official Lyric Video]`, `[HD]`, `[4K]`) from all audio files and `.lrc` sidecars.
 - **High-Speed Multi-Threaded Engine**: Uses `aria2c` with 8 concurrent connections (`-x 8 -s 8`) for maximum speed.
 
