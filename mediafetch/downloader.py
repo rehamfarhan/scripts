@@ -214,13 +214,14 @@ def build_ydl_options(profile_name: str, target_dir: Path, config: dict) -> dict
             "format": "bestaudio/best",
             "writethumbnail": True,
             "postprocessors": [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "0"},
                 {"key": "FFmpegThumbnailsConvertor", "format": "png", "when": "before_dl"},
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "0"},
                 {"key": "EmbedThumbnail"},
                 {"key": "FFmpegMetadata"},
             ],
             "postprocessor_args": {
-                "ThumbnailsConvertor": ["-vf", "crop=ih:ih"]
+                "thumbnailsconvertor": ["-vf", "crop=min(iw\\,ih):min(iw\\,ih)"],
+                "ThumbnailsConvertor": ["-vf", "crop=min(iw\\,ih):min(iw\\,ih)"],
             }
         })
     elif profile_name == "flac":
@@ -228,13 +229,14 @@ def build_ydl_options(profile_name: str, target_dir: Path, config: dict) -> dict
             "format": "bestaudio/best",
             "writethumbnail": True,
             "postprocessors": [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "flac"},
                 {"key": "FFmpegThumbnailsConvertor", "format": "png", "when": "before_dl"},
+                {"key": "FFmpegExtractAudio", "preferredcodec": "flac"},
                 {"key": "EmbedThumbnail"},
                 {"key": "FFmpegMetadata"},
             ],
             "postprocessor_args": {
-                "ThumbnailsConvertor": ["-vf", "crop=ih:ih"]
+                "thumbnailsconvertor": ["-vf", "crop=min(iw\\,ih):min(iw\\,ih)"],
+                "ThumbnailsConvertor": ["-vf", "crop=min(iw\\,ih):min(iw\\,ih)"],
             }
         })
     elif profile_name == "podcast":
