@@ -1,6 +1,6 @@
 # 📥 Media Fetcher (`mediafetch.py` / `mf`)
 
-A robust, high-performance standalone Python wrapper for `yt-dlp` configured with multi-threaded downloads (`aria2c`), clipboard URL auto-pasting, smart destination directory routing (defaults to `~/Downloads`), preset profiles for video, music/audio, FLAC, shorts, podcasts, and archives, multithreaded batch LRCLIB lyrics tagging, and custom configuration support.
+A robust, high-performance standalone Python wrapper for `yt-dlp` featuring a full-screen alternate-buffer TUI dashboard inspired by `superfile` and Dusky TUIs, multi-threaded downloads (`aria2c`), clipboard URL auto-pasting, smart destination directory routing (defaults to `~/Videos/Downloads` and `~/Music/Downloads`), preset profiles, multithreaded non-interactive LRCLIB lyrics tagging, and custom configuration support.
 
 ---
 
@@ -17,29 +17,50 @@ A robust, high-performance standalone Python wrapper for `yt-dlp` configured wit
 
 ---
 
+## 🧱 Modular Architecture
+
+`mediafetch` is split into dedicated subscripts inside `mediafetch/`:
+- **`mediafetch.py`**: Lightweight CLI dispatcher, argument parser, and pipeline orchestrator.
+- **`tui.py`**: Full-screen alternate screen buffer renderer (`Live(screen=True)`), cut-in rounded panels (`box.ROUNDED`), track inspector, full-width block progress gauge, and non-blocking keyboard listener.
+- **`downloader.py`**: Native `yt_dlp` thread pool engine, instant stream resolution, progress hooks with `DownloadCancelled` handlers, and `.part` file cleanup.
+- **`lyrics.py`**: LRCLIB API client, ID3v2 `USLT` & FLAC Vorbis comment embedding, non-interactive batch pipeline, and interactive `fzf` attachment.
+- **`utils.py`**: Title sanitization regex, clipboard reader, `.mfignore` engine, Hyprland window focus, and configuration loader.
+
+---
+
 ## ✨ Features
 
-- **🎨 Superfile-Style Multi-Pane Dashboard**: A fixed, modular terminal layout (`box.ROUNDED`) featuring a top header, sliding window download queue (showing track numbers, spinners, speeds, real file sizes), live active track metadata inspector, and aggregate speed/lyrics status bar.
-- **⚡ 100% Non-Interactive Execution**: Downloads never stall or freeze waiting for user input. If LRCLIB has no online lyrics for a track (e.g. slowed/reverb edits), it logs `Skipped` and seamlessly proceeds to the next track.
-- **🐛 Playlist Deduplication**: Prevents duplicate song entries when downloading YouTube or YouTube Music albums/playlists.
-- **⏳ Separated Two-Phase Pipeline**: Downloads all media in parallel first; once downloads are complete, batch-processes lyrics tagging and `.lrc` companion generation in a fast second phase.
-- **🚀 Instant (<0.05s) Startup**: Lazy-loads heavy libraries so `--help`, `cleanup`, and quick commands execute instantly without delay.
-- **📋 Smart Clipboard Auto-Paste**: Running `mf music`, `mf audio`, `mf video`, etc. without entering a URL automatically reads media URLs from your system clipboard (`wl-paste`, `xclip`, `pbpaste`).
-- **📁 Default Downloads Folders**: Videos route to `~/Videos/Downloads` and audio/music to `~/Music/Downloads` (customizable via `-o` / `--output-dir` or `~/.config/mediafetch/config.json`).
+- **🎨 Full-Screen Alternate-Buffer TUI (`Live(screen=True)`)**: Takes over the terminal in private buffer mode (`\033[?1049h`). Eliminates stdout spam and frame redraw scrolling; cleanly restores the terminal and cursor upon exit or cancellation.
+- **⚡ Full-Width Progress Gauge**: Dedicated full-width rounded gauge panel displaying high-contrast block characters (`████░░`) indicating exact batch and single-stream progress.
+- **🚀 Instant (<0.1s) Download Startup**: Single media URLs bypass blocking metadata pre-extraction and stream straight into the download engine with zero startup lag.
+- **🛑 Graceful Single-Press `Ctrl+C`**: One `Ctrl+C` or pressing `q` triggers a unified cancellation event, raises `yt_dlp.utils.DownloadCancelled`, halts active child processes (`aria2c`, `ffmpeg`), wipes incomplete `.part` files, and restores the terminal without tracebacks.
+- **⚡ 100% Non-Interactive Execution**: Downloads never freeze waiting for user input. If LRCLIB has no online lyrics for a track, it logs `✗ Skipped` and immediately continues.
+- **🐛 Deduplicated Playlists & Albums**: Fast flat playlist extraction prevents duplicate tracks.
+- **⏳ Two-Phase Pipeline**: Downloads all media in parallel first; once all downloads are verified, batch-tags lyrics and writes `.lrc` companion sidecars in phase two.
+- **📋 Smart Clipboard Auto-Paste**: Running `mf music`, `mf audio`, `mf video`, etc. without entering a URL automatically detects media links from your clipboard (`wl-paste`, `xclip`, `pbpaste`).
+- **📁 Default Downloads Folders**: Videos route to `~/Videos/Downloads` and audio/music to `~/Music/Downloads` (customizable via `-o` / `--output-dir` or `config.json`).
 - **Smart Presets & Aliases**:
   - `video` (Default): 1080p H.265 MKV video, embeds PNG thumbnail, merges English subtitles (`en.*`).
-  - `music` (alias: `audio`): High quality MP3 (320k), square-cropped album art metadata, automated LRCLIB lyrics tagging (ID3 `USLT` tags), and `.lrc` companion sidecar file generation.
+  - `music` (alias: `audio`): High quality MP3 (320k), 1:1 square-cropped album art metadata, automated LRCLIB lyrics tagging (ID3 `USLT` tags), and `.lrc` companion sidecar file generation.
   - `flac`: Lossless FLAC audio extraction, square album art, embedded lyrics, and `.lrc` sidecar file generation.
   - `shorts`: 1080p MP4 optimized for 9:16 vertical video formats (YouTube Shorts, Instagram Reels, TikTok).
   - `podcast`: Audio-only Opus format, embeds metadata and thumbnail.
   - `archive`: Maximum quality video/audio preservation with all available subtitles.
 - **🎤 LRCLIB Lyrics Tagging & `kew` Player Integration**:
-  - Embeds unsynchronized lyrics directly into MP3 ID3v2 `USLT` frames and FLAC Vorbis comments for universal player compatibility (VLC, Lollypop, Amberol, Foobar2000, etc.).
+  - Embeds unsynchronized lyrics directly into MP3 ID3v2 `USLT` frames and FLAC Vorbis comments for universal player compatibility (VLC, Amberol, Lollypop, etc.).
   - Generates synchronized `.lrc` sidecar files for terminal players (`kew`, `cmus`).
-- **🎵 Folder & File Lyrics Tagging**: Command `mf lyrics ~/Music` or `mf lyrics track.mp3` to fetch and embed lyrics for local files or whole directories with the Rich TUI.
+- **🎵 Folder & File Lyrics Tagging**: Command `mf lyrics ~/Music` or `mf lyrics track.mp3` to fetch and embed lyrics for local files or whole directories.
 - **📎 Interactive Lyrics Attachment**: Standalone `mf attach` utility launches an interactive 2-step `fzf` picker to attach local `.lrc` files to untagged audio tracks with `.mfignore` support.
 - **🧹 Filename Cleanup Engine**: Command `mf cleanup` or `mf cleanup /path/to/dir` recursively strips YouTube ID tags (e.g. `[kohSdJPaWLA]`) and video clutter (`[Official Lyric Video]`, `[HD]`, `[4K]`) from all audio files and `.lrc` sidecars.
 - **High-Speed Multi-Threaded Engine**: Uses `aria2c` with 8 concurrent connections (`-x 8 -s 8`) for maximum download speeds.
+
+---
+
+## ⌨️ Interactive Controls
+
+During live dashboard execution:
+- `q` / `Q` / `Ctrl+C`: Abort immediately, purge partial `.part` files, and restore the terminal.
+- `c` / `C`: Toggle hide/show of completed items from the active queue table.
 
 ---
 
