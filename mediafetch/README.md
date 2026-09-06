@@ -19,8 +19,9 @@ A robust, high-performance standalone Python wrapper for `yt-dlp` configured wit
 
 ## ✨ Features
 
-- **🎨 Modern Rich TUI Engine**: Replaces cluttered raw `yt-dlp` console dumps with clean multi-task parallel progress bars, stage transitions (`Extracting audio...`, `Cropping cover...`, `Embedding art...`), and a polished summary panel table.
+- **🎨 Superfile-Style Multi-Pane Dashboard**: A fixed, modular terminal layout (`box.ROUNDED`) featuring a top header, sliding window download queue (showing track numbers, spinners, speeds, real file sizes), live active track metadata inspector, and aggregate speed/lyrics status bar.
 - **⚡ 100% Non-Interactive Execution**: Downloads never stall or freeze waiting for user input. If LRCLIB has no online lyrics for a track (e.g. slowed/reverb edits), it logs `Skipped` and seamlessly proceeds to the next track.
+- **🐛 Playlist Deduplication**: Prevents duplicate song entries when downloading YouTube or YouTube Music albums/playlists.
 - **⏳ Separated Two-Phase Pipeline**: Downloads all media in parallel first; once downloads are complete, batch-processes lyrics tagging and `.lrc` companion generation in a fast second phase.
 - **🚀 Instant (<0.05s) Startup**: Lazy-loads heavy libraries so `--help`, `cleanup`, and quick commands execute instantly without delay.
 - **📋 Smart Clipboard Auto-Paste**: Running `mf music`, `mf audio`, `mf video`, etc. without entering a URL automatically reads media URLs from your system clipboard (`wl-paste`, `xclip`, `pbpaste`).

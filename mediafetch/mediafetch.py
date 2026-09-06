@@ -3,11 +3,12 @@
 mediafetch (mf) - High-Performance Profile-Based Media Downloader & Tagging Pipeline
 
 Features:
-  - Rich TUI with multi-task parallel download progress bars
+  - Modular superfile-style multi-pane dashboard with real-time stats
   - Automated non-interactive execution (zero hanging or prompts on missing lyrics)
   - Separated two-phase pipeline: fast parallel downloads first, batch lyrics second
   - Profile-based presets: music/audio (MP3 320k + square art), flac, video (1080p MKV), shorts, podcast, archive
   - LRCLIB lyrics tagger (embedded ID3v2 USLT / FLAC tags + synced .lrc sidecars for kew/cmus)
+  - Deduplicated playlist & album extraction
   - Standalone utility subcommands: cleanup, attach, lyrics
 """
 
@@ -709,86 +710,40 @@ def cleanup_directory(target_dir_str: str = None):
     return True
 
 
-def process_local_lyrics_batch(target_path_str: str):
-    """Processes lyrics fetching for a local file or directory using the Rich TUI."""
-    target_path = Path(target_path_str).resolve()
-    if not target_path.exists():
-        safe_print(f"{RED}[lyrics] Error: Path not found: {target_path_str}{RESET}", file=sys.stderr)
-        return False
-
-    console = get_console()
-    audio_extensions = {".mp3", ".flac", ".m4a", ".ogg", ".wav"}
-
-    if target_path.is_file():
-        audio_files = [target_path] if target_path.suffix.lower() in audio_extensions else []
-    else:
-        audio_files = sorted([
-            f for f in target_path.rglob("*")
-            if f.is_file() and f.suffix.lower() in audio_extensions
-        ])
-
-    if not audio_files:
-        console.print(f"[yellow]No audio files found in: {target_path}[/]")
-        return False
-
-    console.print(f"\n[bold cyan]🎵 Lyrics Tagger:[/] Found {len(audio_files)} track(s)\n")
-
-    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
-    results = []
-
-    with Progress(
-        SpinnerColumn("dots"),
-        TextColumn("[bold]{task.description}"),
-        BarColumn(bar_width=25),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        console=console
-    ) as progress:
-        task = progress.add_task("[cyan]Fetching lyrics...", total=len(audio_files))
-        for song_file in audio_files:
-            status = process_lyrics_for_file(song_file)
-            results.append((song_file.name, status))
-            progress.advance(task)
-
-    # Render Results Table
-    render_summary_table(results, console)
-    return True
-
-
 # ==============================================================================
-# TUI Modern Download Engine (yt_dlp Python API + Rich Progress)
+# Superfile-Style Modular TUI Architecture & Dashboard
 # ==============================================================================
 
 PROFILES = {
     "video": {
         "desc": "1080p H.265 MKV video with English subtitles",
         "type": "video",
-        "ext": "mkv"
+        "format_desc": "MKV 1080p H.265"
     },
     "music": {
         "desc": "High-quality MP3 (320k) with square album art & embedded lyrics",
         "type": "music",
-        "ext": "mp3"
+        "format_desc": "MP3 320k (VBR 0)"
     },
     "flac": {
         "desc": "Lossless FLAC audio with square album art & embedded lyrics",
         "type": "music",
-        "ext": "flac"
+        "format_desc": "FLAC Lossless"
     },
     "shorts": {
         "desc": "1080p MP4 optimized for vertical video (Shorts, Reels, TikTok)",
         "type": "video",
-        "ext": "mp4"
+        "format_desc": "MP4 1080p Vertical"
     },
     "podcast": {
         "desc": "Audio-only Opus format with embedded metadata & thumbnail",
         "type": "music",
-        "ext": "opus"
+        "format_desc": "Opus Audio"
     },
     "archive": {
         "desc": "Maximum quality video & audio preservation with all subtitles",
         "type": "video",
-        "ext": "mkv"
+        "format_desc": "Archive (Max Quality)"
     }
 }
 
@@ -804,12 +759,194 @@ def resolve_profile_name(name: str) -> str:
     return PROFILE_ALIASES.get(name.lower(), name.lower())
 
 
+class TrackItem:
+    """Represents a single track in the download queue."""
+    def __init__(self, idx: int, url: str, title: str, item_id: str = ""):
+        self.idx = idx
+        self.url = url
+        self.title = title
+        self.item_id = item_id
+        self.status = "queued"  # "queued", "downloading", "processing", "done", "error"
+        self.stage_text = "Queued"
+        self.downloaded_bytes = 0
+        self.total_bytes = 0
+        self.speed = 0
+        self.eta = 0
+        self.percent = 0.0
+        self.final_size_str = ""
+        self.file_path = None
+        self.artist = ""
+        self.album = ""
+        self.lyrics_status = ""  # "✓ Synced", "✓ Plain", "✗ Skipped"
+        self.error_msg = ""
+
+
+class DashboardState:
+    """Thread-safe state store for the live dashboard."""
+    def __init__(self, profile_name: str, target_dir: Path, items: list):
+        self.lock = threading.Lock()
+        self.profile_name = profile_name
+        self.target_dir = target_dir
+        self.items = items
+        self.active_idx = 0
+        self.total_speed = 0
+        self.completed_count = 0
+        self.synced_lyrics_count = 0
+        self.skipped_lyrics_count = 0
+        self.start_time = time.time()
+        self.phase = "Downloading"  # "Downloading", "Lyrics", "Complete"
+
+
 class QuietLogger:
-    """Mutes noisy yt-dlp raw stdout/stderr to let Rich TUI render cleanly."""
+    """Mutes noisy yt-dlp stdout/stderr to prevent breaking the live dashboard."""
     def debug(self, msg): pass
     def info(self, msg): pass
     def warning(self, msg): pass
     def error(self, msg): pass
+
+
+def format_bytes(num_bytes: int) -> str:
+    """Formats byte counts into human-readable strings."""
+    if not num_bytes or num_bytes <= 0:
+        return ""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if num_bytes < 1024.0:
+            return f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024.0
+    return f"{num_bytes:.1f} TB"
+
+
+def render_dashboard(state: DashboardState, max_queue_rows: int = 10):
+    """Renders the superfile-style modular multi-pane dashboard."""
+    from rich.layout import Layout
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich import box
+
+    with state.lock:
+        items = list(state.items)
+        active_idx = state.active_idx
+        completed = state.completed_count
+        total = len(items)
+        prof_info = PROFILES.get(state.profile_name, {})
+        format_desc = prof_info.get("format_desc", state.profile_name.upper())
+
+        # Aggregate download speed
+        total_speed = sum(it.speed for it in items if it.status == "downloading")
+        speed_str = f"{total_speed / 1048576:.1f} MB/s" if total_speed > 0 else "Idle"
+
+        # Active item for inspector
+        inspect_item = items[active_idx] if 0 <= active_idx < len(items) else (items[0] if items else None)
+
+    # 1. Root Layout
+    layout = Layout()
+    layout.split_column(
+        Layout(name="header", size=3),
+        Layout(name="main", ratio=1),
+        Layout(name="footer", size=3)
+    )
+    layout["main"].split_row(
+        Layout(name="queue", ratio=2),
+        Layout(name="details", ratio=1)
+    )
+
+    # 2. Header Panel
+    target_short = str(state.target_dir).replace(str(Path.home()), "~")
+    header_content = (
+        f"[bold cyan]📥 Media Fetcher (mf)[/] [dim]•[/] "
+        f"[bold white]{state.profile_name.upper()}[/] [dim]({format_desc})[/] [dim]➔[/] "
+        f"[cyan]{target_short}[/] [dim]•[/] [bold white]{total} Track{'s' if total != 1 else ''}[/]"
+    )
+    layout["header"].update(Panel(header_content, box=box.ROUNDED, border_style="cyan"))
+
+    # 3. Queue Table (Windowed to fit comfortably without vertical scrolling)
+    if len(items) <= max_queue_rows:
+        start_idx = 0
+        end_idx = len(items)
+    else:
+        half = max_queue_rows // 2
+        start_idx = max(0, min(active_idx - half, len(items) - max_queue_rows))
+        end_idx = min(len(items), start_idx + max_queue_rows)
+
+    visible_items = items[start_idx:end_idx]
+
+    q_table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
+    q_table.add_column("num", width=6, style="dim")
+    q_table.add_column("name", ratio=3, no_wrap=True)
+    q_table.add_column("status", ratio=2, justify="right", no_wrap=True)
+
+    for it in visible_items:
+        idx_str = f"[{it.idx+1:02d}]"
+        clean_name = it.title[:36]
+
+        if it.status == "done":
+            name_cell = f"[green]✓ {clean_name}[/]"
+            status_cell = f"[dim]{it.final_size_str or 'Done'}[/] [green]✓[/]"
+        elif it.status == "downloading":
+            name_cell = f"[bold cyan]⠋ {clean_name}[/]"
+            speed_txt = f"{it.speed/1048576:.1f}M/s" if it.speed else ""
+            status_cell = f"[cyan]{it.percent:>3.0f}% {speed_txt}[/]"
+        elif it.status == "processing":
+            name_cell = f"[magenta]⚡ {clean_name}[/]"
+            status_cell = f"[magenta]{it.stage_text}[/]"
+        elif it.status == "error":
+            name_cell = f"[red]✗ {clean_name}[/]"
+            status_cell = "[red]Error[/]"
+        else:
+            name_cell = f"[dim]· {clean_name}[/]"
+            status_cell = "[dim]Queued[/]"
+
+        q_table.add_row(idx_str, name_cell, status_cell)
+
+    window_label = f"Showing {start_idx+1}-{end_idx} of {total}" if total > max_queue_rows else f"{total} Item{'s' if total != 1 else ''}"
+    layout["queue"].update(Panel(
+        q_table,
+        title=f"[bold cyan]📋 Download Queue [dim]({window_label})[/][/]",
+        box=box.ROUNDED,
+        border_style="blue"
+    ))
+
+    # 4. Inspector Panel (Active Item Metadata & Batch Gauge)
+    d_table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
+    d_table.add_column("label", style="bold cyan", width=9)
+    d_table.add_column("value", no_wrap=True)
+
+    if inspect_item:
+        d_table.add_row("Track:", f"[bold white]{inspect_item.title[:24]}[/]")
+        d_table.add_row("Artist:", f"{inspect_item.artist[:24] or '[dim]Unknown[/]'}")
+        d_table.add_row("Album:", f"{inspect_item.album[:24] or '[dim]Unknown[/]'}")
+        d_table.add_row("Format:", f"[green]{format_desc}[/]")
+        stage_style = "[magenta]" if inspect_item.status == "processing" else "[cyan]"
+        d_table.add_row("Stage:", f"{stage_style}{inspect_item.stage_text}[/]")
+    else:
+        d_table.add_row("Status:", "[dim]Ready[/]")
+
+    # Overall Batch Progress Bar
+    pct_complete = (completed / total * 100) if total > 0 else 0
+    filled = int(pct_complete / 10)
+    bar_str = f"[green]{'━' * filled}[/][dim]{'━' * (10 - filled)}[/] {pct_complete:>3.0f}%"
+
+    d_table.add_row("", "")
+    d_table.add_row("Progress:", f"{completed}/{total} ({bar_str})")
+
+    layout["details"].update(Panel(
+        d_table,
+        title="[bold cyan]ℹ️ Active Inspector[/]",
+        box=box.ROUNDED,
+        border_style="magenta"
+    ))
+
+    # 5. Footer Panel (Overall Metrics & Lyrics Summary)
+    lyrics_txt = f"[bold green]{state.synced_lyrics_count} Synced[/] [dim]│[/] [dim yellow]{state.skipped_lyrics_count} Skipped[/]"
+    footer_content = (
+        f"[dim]🚀 Speed:[/] [bold green]{speed_str}[/] [dim]│[/] "
+        f"[dim]Phase:[/] [bold cyan]{state.phase}[/] [dim]│[/] "
+        f"[dim]🎵 Lyrics:[/] {lyrics_txt} [dim]│[/] "
+        f"[dim]Completed:[/] [bold white]{completed}/{total}[/]"
+    )
+    layout["footer"].update(Panel(footer_content, box=box.ROUNDED, border_style="dim"))
+
+    return layout
 
 
 def build_ydl_options(profile_name: str, target_dir: Path, config: dict):
@@ -912,55 +1049,54 @@ def build_ydl_options(profile_name: str, target_dir: Path, config: dict):
     return opts
 
 
-def download_single_item(url: str, base_opts: dict, progress, task_id: int, completed_files: list):
-    """Worker function to download a single item and update its Rich progress bar."""
+def download_track_worker(item: TrackItem, base_opts: dict, state: DashboardState):
+    """Worker function to execute download and update state in real-time."""
     import yt_dlp
 
-    # Clone options for this worker
     ydl_opts = dict(base_opts)
 
     def progress_hook(d):
         status = d.get("status")
         if status == "downloading":
-            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-            downloaded = d.get("downloaded_bytes") or 0
-            speed = d.get("speed")
-            speed_str = f"{speed/1048576:.1f} MB/s" if speed else ""
-            progress.update(
-                task_id,
-                total=total if total > 0 else None,
-                completed=downloaded,
-                status=f"[cyan]Downloading {speed_str}[/]" if speed_str else "[cyan]Downloading...[/]"
-            )
+            item.status = "downloading"
+            item.downloaded_bytes = d.get("downloaded_bytes") or 0
+            item.total_bytes = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            item.speed = d.get("speed") or 0
+            if item.total_bytes > 0:
+                item.percent = min(100.0, (item.downloaded_bytes / item.total_bytes) * 100)
+            item.stage_text = "Downloading"
+            with state.lock:
+                state.active_idx = item.idx
         elif status == "finished":
-            progress.update(task_id, status="[yellow]Processing...[/]")
+            item.status = "processing"
+            item.stage_text = "Processing..."
 
     def postprocessor_hook(d):
+        item.status = "processing"
         pp = d.get("postprocessor", "")
         if pp == "ExtractAudio":
-            progress.update(task_id, status="[magenta]Extracting audio...[/]")
+            item.stage_text = "Extracting Audio"
         elif pp == "FFmpegThumbnailsConvertor":
-            progress.update(task_id, status="[blue]Cropping art...[/]")
+            item.stage_text = "Cropping Cover Art"
         elif pp == "EmbedThumbnail":
-            progress.update(task_id, status="[blue]Embedding cover...[/]")
+            item.stage_text = "Embedding Cover Art"
         elif pp == "FFmpegMetadata":
-            progress.update(task_id, status="[dim]Writing tags...[/]")
+            item.stage_text = "Embedding Metadata"
         elif pp == "FFmpegVideoConvertor":
-            progress.update(task_id, status="[magenta]Converting video...[/]")
+            item.stage_text = "Converting Video"
 
     ydl_opts["progress_hooks"] = [progress_hook]
     ydl_opts["postprocessor_hooks"] = [postprocessor_hook]
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(item.url, download=True)
             if not info:
-                progress.update(task_id, status="[red]Failed[/]")
+                item.status = "error"
+                item.stage_text = "Failed"
                 return
 
-            # Update final title
-            final_title = clean_title(info.get("title", "Completed Track"))
-            progress.update(task_id, title=final_title[:32])
+            item.title = clean_title(info.get("title") or item.title)
 
             # Locate downloaded file path
             file_found = None
@@ -976,128 +1112,244 @@ def download_single_item(url: str, base_opts: dict, progress, task_id: int, comp
                     file_found = prep_path
 
             if file_found:
-                completed_files.append(file_found)
-                progress.update(task_id, status="[bold green]✓ Downloaded[/]")
-            else:
-                progress.update(task_id, status="[bold green]✓ Complete[/]")
+                item.file_path = file_found
+                item.final_size_str = format_bytes(os.path.getsize(file_found))
+                artist, title, album = get_audio_metadata(file_found)
+                item.artist = artist
+                item.album = album
+
+            item.status = "done"
+            item.stage_text = "Done"
+            with state.lock:
+                state.completed_count += 1
 
     except Exception as e:
-        progress.update(task_id, status=f"[red]Error: {str(e)[:20]}[/]")
+        item.status = "error"
+        item.stage_text = "Error"
+        item.error_msg = str(e)
 
 
-def render_summary_table(results: list, console):
-    """Renders a beautiful Rich summary table."""
+def render_final_summary_panel(state: DashboardState, console):
+    """Renders the finalized, pristine superfile summary card."""
     from rich.table import Table
     from rich.panel import Panel
+    from rich import box
 
-    table = Table(show_header=True, header_style="bold cyan", border_style="dim")
+    table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE_HEAVY, expand=True)
     table.add_column("#", style="dim", width=4)
-    table.add_column("Track / File", style="bold white", min_width=30)
-    table.add_column("Status / Lyrics", style="green")
+    table.add_column("Track Title", style="bold white", min_width=32)
+    table.add_column("Size", style="cyan", width=10, justify="right")
+    table.add_column("Status / Lyrics", style="green", width=18, justify="right")
 
-    for idx, (filename, status) in enumerate(results, 1):
-        table.add_row(str(idx), filename, status)
+    for idx, item in enumerate(state.items, 1):
+        clean_name = item.title[:45]
+        status_disp = item.lyrics_status or ("[green]✓ Saved[/]" if item.status == "done" else "[red]✗ Failed[/]")
+        table.add_row(f"{idx:02d}", clean_name, item.final_size_str or "-", status_disp)
 
+    target_short = str(state.target_dir).replace(str(Path.home()), "~")
+    summary_panel = Panel(
+        table,
+        title=f"[bold cyan]📥 Download Complete [dim]• {len(state.items)} Track{'s' if len(state.items) != 1 else ''} ➔ {target_short}[/][/]",
+        box=box.ROUNDED,
+        border_style="cyan"
+    )
     console.print()
-    console.print(Panel(table, title="[bold cyan]📥 Download & Tagging Summary[/]", border_style="cyan"))
+    console.print(summary_panel)
     console.print()
 
 
 def run_pipeline(profile_name: str, urls: list, target_dir: Path, config: dict):
-    """Executes the modern parallel TUI download and lyrics pipeline."""
+    """Executes the superfile-style parallel dashboard download & lyrics pipeline."""
     import yt_dlp
-    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn
+    from rich.live import Live
     console = get_console()
 
-    console.print(f"\n[bold cyan]📥 Media Fetcher (mf)[/] [dim]•[/] [bold white]{profile_name.upper()}[/] [dim]➔[/] [cyan]{target_dir}[/]\n")
-
-    # Step 1: Pre-scan URLs / expand playlists if needed
+    # Step 1: Pre-scan URLs & deduplicate playlist/album entries
     expanded_items = []
-    with console.status("[bold cyan]Inspecting media stream(s)...[/]", spinner="dots"):
-        ydl_flat_opts = {"extract_flat": True, "quiet": True, "no_warnings": True, "logger": QuietLogger()}
+    seen_ids = set()
+
+    with console.status("[bold cyan]🔍 Inspecting media streams & expanding playlists...[/]", spinner="dots"):
+        ydl_flat_opts = {
+            "extract_flat": True,
+            "quiet": True,
+            "no_warnings": True,
+            "logger": QuietLogger()
+        }
         with yt_dlp.YoutubeDL(ydl_flat_opts) as ydl:
             for url in urls:
                 try:
                     info = ydl.extract_info(url, download=False)
                     if "entries" in info:
                         for entry in info["entries"]:
-                            if entry:
+                            if not entry:
+                                continue
+                            eid = entry.get("id")
+                            if eid and eid in seen_ids:
+                                continue
+                            if eid:
+                                seen_ids.add(eid)
+
+                            e_url = entry.get("url") or (f"https://www.youtube.com/watch?v={eid}" if eid else "")
+                            e_title = clean_title(entry.get("title") or "Track")
+                            if e_url:
                                 expanded_items.append({
-                                    "url": entry.get("url") or f"https://www.youtube.com/watch?v={entry.get('id')}",
-                                    "title": clean_title(entry.get("title") or "Queued Item")
+                                    "url": e_url,
+                                    "id": eid or "",
+                                    "title": e_title
                                 })
                     else:
+                        eid = info.get("id")
+                        if eid and eid in seen_ids:
+                            continue
+                        if eid:
+                            seen_ids.add(eid)
                         expanded_items.append({
                             "url": url,
+                            "id": eid or "",
                             "title": clean_title(info.get("title") or "Media Item")
                         })
                 except Exception:
                     expanded_items.append({
                         "url": url,
+                        "id": "",
                         "title": "Media Item"
                     })
 
     if not expanded_items:
-        console.print("[red]No valid media items found to download.[/]")
+        console.print("[red]Error: No valid media items found to download.[/]")
         return 1
 
-    # Step 2: Phase 1 - Parallel Downloads with Rich Progress
-    completed_files = []
+    # Initialize Dashboard State
+    track_items = [
+        TrackItem(idx, it["url"], it["title"], it.get("id", ""))
+        for idx, it in enumerate(expanded_items)
+    ]
+    state = DashboardState(profile_name, target_dir, track_items)
     base_opts = build_ydl_options(profile_name, target_dir, config)
-    max_workers = min(len(expanded_items), int(config.get("parallel_downloads", 3)))
+    max_workers = min(len(track_items), int(config.get("parallel_downloads", 3)))
+
+    # Step 2: Phase 1 - Parallel Downloads with Live Dashboard
+    stop_event = threading.Event()
+
+    def ui_refresh_loop(live):
+        while not stop_event.is_set():
+            try:
+                live.update(render_dashboard(state))
+            except Exception:
+                pass
+            time.sleep(0.12)
+
+    with Live(render_dashboard(state), console=console, refresh_per_second=8, screen=False) as live:
+        refresher = threading.Thread(target=ui_refresh_loop, args=(live,), daemon=True)
+        refresher.start()
+
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(download_track_worker, item, base_opts, state)
+                    for item in track_items
+                ]
+                for f in as_completed(futures):
+                    try:
+                        f.result()
+                    except Exception:
+                        pass
+
+            # Step 3: Phase 2 - Lyrics Processing (Completely Non-Interactive)
+            profile_type = PROFILES.get(profile_name, {}).get("type", "video")
+            if profile_type == "music":
+                with state.lock:
+                    state.phase = "Lyrics Tagging"
+
+                for item in track_items:
+                    if item.status == "done" and item.file_path:
+                        with state.lock:
+                            state.active_idx = item.idx
+                            item.stage_text = "Fetching Lyrics"
+
+                        # Non-interactive query
+                        res = process_lyrics_for_file(item.file_path)
+                        with state.lock:
+                            item.lyrics_status = res
+                            if "Synced" in res:
+                                state.synced_lyrics_count += 1
+                            elif "Skipped" in res:
+                                state.skipped_lyrics_count += 1
+
+            with state.lock:
+                state.phase = "Complete"
+
+        finally:
+            stop_event.set()
+            refresher.join(timeout=1.0)
+            live.update(render_dashboard(state))
+
+    # Step 4: Render Final Clean Summary
+    render_final_summary_panel(state, console)
+    return 0
+
+
+# ==============================================================================
+# Batch Local Lyrics Command (mf lyrics <DIR>)
+# ==============================================================================
+
+def process_local_lyrics_batch(target_path_str: str):
+    """Processes lyrics fetching for a local directory using the Rich TUI."""
+    target_path = Path(target_path_str).resolve()
+    if not target_path.exists():
+        safe_print(f"{RED}[lyrics] Error: Path not found: {target_path_str}{RESET}", file=sys.stderr)
+        return False
+
+    console = get_console()
+    audio_extensions = {".mp3", ".flac", ".m4a", ".ogg", ".wav"}
+
+    if target_path.is_file():
+        audio_files = [target_path] if target_path.suffix.lower() in audio_extensions else []
+    else:
+        audio_files = sorted([
+            f for f in target_path.rglob("*")
+            if f.is_file() and f.suffix.lower() in audio_extensions
+        ])
+
+    if not audio_files:
+        console.print(f"[yellow]No audio files found in: {target_path}[/]")
+        return False
+
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich import box
+
+    console.print(f"\n[bold cyan]🎵 Lyrics Tagger:[/] Found {len(audio_files)} track(s) in [cyan]{target_path}[/]\n")
+    results = []
 
     with Progress(
         SpinnerColumn("dots"),
-        TextColumn("[bold cyan]{task.fields[title]:<35}"),
-        BarColumn(bar_width=20),
-        DownloadColumn(),
-        TransferSpeedColumn(),
-        TimeRemainingColumn(),
-        TextColumn("{task.fields[status]}"),
+        TextColumn("[bold cyan]{task.description}"),
+        BarColumn(bar_width=25),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
         console=console
     ) as progress:
-        task_map = {}
-        for item in expanded_items:
-            short_t = item["title"][:32]
-            tid = progress.add_task(
-                "",
-                title=short_t,
-                total=None,
-                completed=0,
-                status="[dim]Queued[/]"
-            )
-            task_map[item["url"]] = tid
+        task = progress.add_task("[cyan]Processing lyrics...", total=len(audio_files))
+        for song_file in audio_files:
+            status = process_lyrics_for_file(song_file)
+            results.append((song_file.name, status))
+            progress.advance(task)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(download_single_item, item["url"], base_opts, progress, task_map[item["url"]], completed_files)
-                for item in expanded_items
-            ]
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception:
-                    pass
+    # Render Results Summary Table
+    table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE_HEAVY, expand=True)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Track Title", style="bold white", min_width=32)
+    table.add_column("Lyrics Status", justify="right")
 
-    # Step 3: Phase 2 - Post-Download Lyrics Fetching (Audio/Music only, completely non-interactive)
-    profile_type = PROFILES.get(profile_name, {}).get("type", "video")
-    summary_results = []
+    for idx, (filename, status) in enumerate(results, 1):
+        table.add_row(f"{idx:02d}", filename[:45], status)
 
-    if profile_type == "music" and completed_files:
-        console.print("\n[bold cyan]🎤 Phase 2: Processing lyrics metadata via LRCLIB...[/]")
-        with console.status("[bold cyan]Fetching lyrics...[/]", spinner="dots"):
-            for fpath in completed_files:
-                lyrics_status = process_lyrics_for_file(fpath)
-                summary_results.append((fpath.name, lyrics_status))
-    else:
-        for fpath in completed_files:
-            summary_results.append((fpath.name, "[green]✓ Saved[/]"))
-
-    # Step 4: Phase 3 - Summary Table
-    if summary_results:
-        render_summary_table(summary_results, console)
-
-    return 0
+    console.print()
+    console.print(Panel(table, title=f"[bold cyan]🎵 Lyrics Tagging Complete [dim]• {len(results)} Track{'s' if len(results) != 1 else ''}[/][/]", box=box.ROUNDED, border_style="cyan"))
+    console.print()
+    return True
 
 
 # ==============================================================================
@@ -1143,7 +1395,7 @@ def main():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     parser = argparse.ArgumentParser(
-        description="Media Fetcher (mf) - Modern profile-based TUI media downloader & tagger",
+        description="Media Fetcher (mf) - Superfile-style modular TUI media downloader & tagger",
         add_help=False
     )
 
@@ -1264,7 +1516,7 @@ def main():
 
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    # Run modern TUI parallel pipeline
+    # Execute superfile-style pipeline
     ret = run_pipeline(profile_name, urls, target_dir, config)
     sys.exit(ret)
 
