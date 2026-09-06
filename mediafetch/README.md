@@ -111,8 +111,11 @@ mf cleanup ~/Music/Downloads
 mf -i
 
 # Embed lyrics into existing local audio file or entire folder recursively
+# Automatically skips tracks with existing .lrc sidecars or embedded metadata (use -f / --force to overwrite)
+mf lyrics
 mf lyrics /path/to/song.mp3
 mf lyrics ~/Music
+mf lyrics -f ~/Music
 
 # Inspect available stream formats only
 mf --list "https://www.youtube.com/watch?v=..."

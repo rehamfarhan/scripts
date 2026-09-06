@@ -135,10 +135,12 @@ def get_mutagen():
 
     _MUTAGEN_TRIED = True
     try:
+        from mutagen import File
         from mutagen.id3 import ID3, USLT, TIT2, TPE1, TALB, Encoding, ID3NoHeaderError
         from mutagen.mp3 import MP3
         from mutagen.flac import FLAC
         _MUTAGEN_CACHE = {
+            "File": File,
             "ID3": ID3,
             "USLT": USLT,
             "TIT2": TIT2,

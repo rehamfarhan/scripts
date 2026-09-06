@@ -186,7 +186,7 @@ def run_pipeline(profile_name: str, urls: list[str], target_dir: Path, config: d
                             res = process_lyrics_for_file(item.file_path)
                             with state.lock:
                                 item.lyrics_status = res
-                                if "Synced" in res:
+                                if "Synced" in res or "Exists" in res or "Tagged" in res:
                                     state.synced_lyrics_count += 1
                                 elif "Skipped" in res:
                                     state.skipped_lyrics_count += 1
@@ -269,6 +269,7 @@ def main():
     parser.add_argument("--list", action="store_true", help="Inspect available video/audio streams (-F)")
     parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive menu")
     parser.add_argument("-o", "--output-dir", help="Override output directory")
+    parser.add_argument("-f", "--force", action="store_true", help="Force re-fetching lyrics even if already present")
     parser.add_argument("--update", action="store_true", help="Update yt-dlp executable")
     parser.add_argument("-h", "--help", action="store_true", help="Show help menu")
 
@@ -296,12 +297,22 @@ def main():
             from .lyrics import process_local_lyrics_batch
         except ImportError:
             from lyrics import process_local_lyrics_batch
-        targets = args.urls
+
+        force = getattr(args, "force", False) or any(arg in ("--force", "-f") for arg in sys.argv[1:])
+        targets = [t for t in args.urls if t not in ("--force", "-f")]
+
         if not targets:
-            safe_print(f"{RED}Usage: mf lyrics <file1.mp3> [dir_or_file2 ...]{RESET}")
-            sys.exit(1)
+            music_dir = Path(config.get("music_dir", DEFAULT_MUSIC_DIR)).expanduser()
+            if music_dir.exists() and any(music_dir.iterdir()):
+                targets = [str(music_dir)]
+            elif (Path.home() / "Music").exists():
+                targets = [str(Path.home() / "Music")]
+            else:
+                safe_print(f"{RED}Usage: mf lyrics <file1.mp3> [dir_or_file2 ...] [-f/--force]{RESET}")
+                sys.exit(1)
+
         for t in targets:
-            process_local_lyrics_batch(t)
+            process_local_lyrics_batch(t, force=force)
         sys.exit(0)
 
     # Subcommand: update
@@ -327,9 +338,10 @@ def main():
         safe_print("  -i, --interactive       Launch interactive prompt")
         safe_print("  --list <URL>            Inspect available stream formats")
         safe_print("  -o, --output-dir <PATH> Custom output directory")
+        safe_print("  -f, --force             Force re-fetching lyrics even if already present")
         safe_print("  attach [DIR]            Interactive fzf picker to attach lyrics to untagged audio")
         safe_print("  cleanup [DIR]           Remove YouTube IDs & clutter from filenames (Defaults to ~/Music)")
-        safe_print("  lyrics <FILE/DIR...>    Fetch & embed lyrics into local audio files or folder")
+        safe_print("  lyrics [FILE/DIR...]    Fetch & embed lyrics into local audio (skips existing, -f to force)")
         safe_print("  --update                Update yt-dlp")
         safe_print("  -h, --help              Show this help banner")
         safe_print()

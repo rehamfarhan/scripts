@@ -151,7 +151,7 @@ def query_lrclib(track_name: str, artist_name: str = "", album_name: str = "", d
 
 
 def has_embedded_lyrics(filepath: Path) -> bool:
-    """Checks if an audio file already has embedded lyrics in ID3 USLT or FLAC tags."""
+    """Checks if an audio file already has embedded lyrics in ID3, FLAC, MP4, or Vorbis tags."""
     mut = get_mutagen()
     if not mut or not filepath.is_file():
         return False
@@ -159,16 +159,52 @@ def has_embedded_lyrics(filepath: Path) -> bool:
     if ext == ".mp3":
         try:
             tags = mut["ID3"](filepath)
-            return "USLT" in tags or len(tags.getall("USLT")) > 0
+            for frame in tags.getall("USLT"):
+                if getattr(frame, "text", "").strip():
+                    return True
+            if "SYLT" in tags:
+                return True
+            for k in tags.keys():
+                if k.startswith("USLT") and getattr(tags[k], "text", "").strip():
+                    return True
         except Exception:
             return False
     elif ext == ".flac":
         try:
             tags = mut["FLAC"](filepath)
-            return "LYRICS" in tags or "UNSYNCEDLYRICS" in tags
+            for k in ("LYRICS", "UNSYNCEDLYRICS", "SYNCEDLYRICS"):
+                if k in tags and any(bool(str(x).strip()) for x in tags[k]):
+                    return True
+        except Exception:
+            return False
+    elif ext in (".m4a", ".mp4"):
+        try:
+            from mutagen.mp4 import MP4
+            tags = MP4(filepath)
+            return "\xa9lyr" in tags and any(bool(str(x).strip()) for x in tags["\xa9lyr"])
+        except Exception:
+            return False
+    elif ext in (".ogg", ".opus"):
+        try:
+            audio = mut["File"](filepath)
+            if audio and audio.tags:
+                for k in ("LYRICS", "UNSYNCEDLYRICS", "SYNCEDLYRICS"):
+                    if k in audio.tags and any(bool(str(x).strip()) for x in audio.tags[k]):
+                        return True
         except Exception:
             return False
     return False
+
+
+def has_lyrics(filepath: Path) -> bool:
+    """Checks if an audio track already has lyrics downloaded (.lrc sidecar file or embedded metadata)."""
+    lrc_path = filepath.with_suffix(".lrc")
+    try:
+        if lrc_path.is_file() and lrc_path.stat().st_size > 0:
+            return True
+    except OSError:
+        pass
+    return has_embedded_lyrics(filepath)
 
 
 def strip_lrc_timestamps(lrc_text: str) -> str:
@@ -237,8 +273,31 @@ def embed_lyrics_in_file(filepath: Path, plain_lyrics: str, synced_lyrics: str) 
     return True
 
 
-def process_lyrics_for_file(filepath: Path) -> str:
+def process_lyrics_for_file(filepath: Path, force: bool = False) -> str:
     """Fetches and embeds lyrics for a single track. 100% non-interactive."""
+    if not force:
+        lrc_path = filepath.with_suffix(".lrc")
+        has_lrc = False
+        try:
+            has_lrc = lrc_path.is_file() and lrc_path.stat().st_size > 0
+        except OSError:
+            pass
+
+        has_embedded = has_embedded_lyrics(filepath)
+
+        if has_lrc or has_embedded:
+            # If local .lrc companion exists but metadata isn't embedded yet, embed locally (0 network requests)
+            if has_lrc and not has_embedded:
+                try:
+                    with open(lrc_path, "r", encoding="utf-8", errors="ignore") as f:
+                        raw_lrc = f.read()
+                    clean_text = strip_lrc_timestamps(raw_lrc)
+                    if clean_text:
+                        embed_lyrics_in_file(filepath, clean_text, raw_lrc)
+                except Exception:
+                    pass
+            return "[dim green]✓ Exists (.lrc)[/]" if has_lrc else "[dim cyan]✓ Already Tagged[/]"
+
     artist, title, album = get_audio_metadata(filepath)
     if not title:
         return "[dim]No title[/]"
@@ -331,7 +390,7 @@ def attach_lyrics_interactive(target_dir_str: str = None) -> bool:
     ignore_set = load_mfignore(target_dir)
     untagged_audio = [
         f for f in all_audio
-        if not is_ignored(f, ignore_set, target_dir) and not has_embedded_lyrics(f)
+        if not is_ignored(f, ignore_set, target_dir) and not has_lyrics(f)
     ]
 
     if not untagged_audio:
@@ -376,7 +435,7 @@ def attach_lyrics_interactive(target_dir_str: str = None) -> bool:
     return attach_unsynced_lyrics_from_lrc(target_audio, target_lrc)
 
 
-def process_local_lyrics_batch(target_path_str: str) -> bool:
+def process_local_lyrics_batch(target_path_str: str, force: bool = False) -> bool:
     """Batch processes lyrics fetching for a local directory using Rich Progress."""
     target_path = Path(target_path_str).resolve()
     if not target_path.exists():
@@ -388,22 +447,73 @@ def process_local_lyrics_batch(target_path_str: str) -> bool:
 
     if target_path.is_file():
         audio_files = [target_path] if target_path.suffix.lower() in audio_extensions else []
+        search_root = target_path.parent
     else:
         audio_files = sorted([
             f for f in target_path.rglob("*")
             if f.is_file() and f.suffix.lower() in audio_extensions
         ])
+        search_root = target_path
 
     if not audio_files:
         console.print(f"[yellow]No audio files found in: {target_path}[/]")
         return False
+
+    # Check .mfignore
+    ignore_set = load_mfignore(search_root)
+    valid_files = [f for f in audio_files if not is_ignored(f, ignore_set, search_root)]
+    ignored_count = len(audio_files) - len(valid_files)
+
+    if not valid_files:
+        console.print(f"[green]✔ All audio file(s) in {target_path} are ignored by .mfignore[/]")
+        return True
 
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
     from rich.table import Table
     from rich.panel import Panel
     from rich import box
 
-    console.print(f"\n[bold cyan]🎵 Lyrics Tagger:[/] Found {len(audio_files)} track(s) in [cyan]{target_path}[/]\n")
+    # Single-file shortcut
+    if target_path.is_file():
+        if not force and has_lyrics(target_path):
+            console.print(f"\n[bold green]✔[/] [cyan]{target_path.name}[/] already has lyrics downloaded (.lrc / embedded tags).")
+            console.print("[dim]Use -f / --force to re-query LRCLIB online.[/]\n")
+            return True
+        status = process_lyrics_for_file(target_path, force=force)
+        console.print(f"\n[bold cyan]🎵 Lyrics Tagger:[/] {target_path.name} -> {status}\n")
+        return True
+
+    # Filter out tracks that already have their lyrics downloaded unless force is requested
+    if not force:
+        already_have_lyrics = []
+        pending_files = []
+        for song_file in valid_files:
+            if has_lyrics(song_file):
+                already_have_lyrics.append(song_file)
+            else:
+                pending_files.append(song_file)
+    else:
+        already_have_lyrics = []
+        pending_files = valid_files
+
+    if not pending_files:
+        msg = f"\n[bold green]✔ All {len(already_have_lyrics)} track(s) in [cyan]{target_path}[/] already have their lyrics downloaded![/]"
+        if ignored_count:
+            msg += f" [dim]({ignored_count} ignored by .mfignore)[/]"
+        msg += "\n[dim]Use -f / --force to re-query LRCLIB online.[/]\n"
+        console.print(msg)
+        return True
+
+    info_str = f"\n[bold cyan]🎵 Lyrics Tagger:[/] Found {len(valid_files)} track(s) in [cyan]{target_path}[/]"
+    details = []
+    if already_have_lyrics:
+        details.append(f"{len(already_have_lyrics)} already downloaded (skipped)")
+    if ignored_count:
+        details.append(f"{ignored_count} ignored by .mfignore")
+    details.append(f"{len(pending_files)} to fetch")
+    info_str += f" [dim]({', '.join(details)})[/]\n"
+    console.print(info_str)
+
     results = []
 
     with Progress(
@@ -414,9 +524,9 @@ def process_local_lyrics_batch(target_path_str: str) -> bool:
         TimeElapsedColumn(),
         console=console
     ) as progress:
-        task = progress.add_task("[cyan]Processing lyrics...", total=len(audio_files))
-        for song_file in audio_files:
-            status = process_lyrics_for_file(song_file)
+        task = progress.add_task("[cyan]Processing lyrics...", total=len(pending_files))
+        for song_file in pending_files:
+            status = process_lyrics_for_file(song_file, force=force)
             results.append((song_file.name, status))
             progress.advance(task)
 
@@ -428,7 +538,14 @@ def process_local_lyrics_batch(target_path_str: str) -> bool:
     for idx, (filename, status) in enumerate(results, 1):
         table.add_row(f"{idx:02d}", filename[:45], status)
 
+    summary_items = [f"{len(results)} Fetched"]
+    if already_have_lyrics:
+        summary_items.append(f"{len(already_have_lyrics)} Already Downloaded")
+    if ignored_count:
+        summary_items.append(f"{ignored_count} Ignored")
+    summary_title = f"[bold cyan]🎵 Lyrics Tagging Complete[/] [dim]• {' • '.join(summary_items)}[/]"
+
     console.print()
-    console.print(Panel(table, title=f"[bold cyan]🎵 Lyrics Tagging Complete [dim]• {len(results)} Track{'s' if len(results) != 1 else ''}[/][/]", box=box.ROUNDED, border_style="cyan"))
+    console.print(Panel(table, title=summary_title, box=box.ROUNDED, border_style="cyan"))
     console.print()
     return True
