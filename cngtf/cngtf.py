@@ -400,12 +400,48 @@ def update_kitty(font_name, font_size):
 def update_foot(font_name, font_size):
     print("-> Updating Foot terminal configuration...")
     foot_conf = CONFIG_DIR / "foot" / "foot.ini"
-    if foot_conf.exists():
-        backup_file(foot_conf)
-        content = foot_conf.read_text()
-        content = re.sub(r'^font=[^:\n]+', f'font={font_name}', content, flags=re.MULTILINE)
-        foot_conf.write_text(content)
-        print("  [OK] Foot terminal config updated.")
+    if not foot_conf.exists():
+        return
+    backup_file(foot_conf)
+    content = foot_conf.read_text()
+
+    def update_pattern(prefix, text):
+        pattern = rf'^{prefix}=([^\n]+)$'
+        match = re.search(pattern, text, flags=re.MULTILINE)
+        if not match:
+            return text
+        val = match.group(1).strip()
+        if ":" in val:
+            parts = val.split(":")
+            options = parts[1:]
+            new_opts = []
+            size_set = False
+            for opt in options:
+                if opt.startswith("size=") or opt.startswith("pixelsize="):
+                    new_opts.append(f"size={font_size}")
+                    size_set = True
+                else:
+                    new_opts.append(opt)
+            if not size_set:
+                new_opts.append(f"size={font_size}")
+            new_val = f"{font_name}:" + ":".join(new_opts)
+        else:
+            new_val = f"{font_name}:size={font_size}"
+        return re.sub(pattern, f"{prefix}={new_val}", text, flags=re.MULTILINE)
+
+    if re.search(r'^font=', content, flags=re.MULTILINE):
+        content = update_pattern("font", content)
+    else:
+        if "[main]" in content:
+            content = content.replace("[main]\n", f"[main]\nfont={font_name}:size={font_size}\n")
+        else:
+            content += f"\n[main]\nfont={font_name}:size={font_size}\n"
+
+    if re.search(r'^font-bold=', content, flags=re.MULTILINE):
+        content = update_pattern("font-bold", content)
+
+    foot_conf.write_text(content)
+    print("  [OK] Foot terminal config updated.")
 
 def update_hyprland(font_name):
     print("-> Updating Hyprland appearance configuration...")
