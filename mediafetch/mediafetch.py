@@ -74,7 +74,8 @@ def run_pipeline(
     urls: list[str],
     target_dir: Path,
     config: dict,
-    cookie_file: Path = None
+    cookie_file: Path = None,
+    nolyrics: bool = False
 ) -> int:
     """Orchestrates the full-screen alternate-buffer download & tagging pipeline."""
     # Lazily import heavy rendering & downloader engines
@@ -133,7 +134,7 @@ def run_pipeline(
     cookies_mode = config.get("cookies_mode", "auto")
     initial_cookie = cookie_file if cookies_mode == "always" else None
 
-    state = DashboardState(profile_name, target_dir, track_items)
+    state = DashboardState(profile_name, target_dir, track_items, nolyrics=nolyrics)
     base_opts = build_ydl_options(profile_name, target_dir, config, cookie_file=initial_cookie)
     max_workers = min(len(track_items), int(config.get("parallel_downloads", 3)))
 
@@ -189,7 +190,7 @@ def run_pipeline(
 
                 # Phase 2: Lyrics Tagging (100% Non-Interactive)
                 profile_type = PROFILES.get(profile_name, {}).get("type", "video")
-                if profile_type == "music" and not shutdown_event.is_set():
+                if profile_type == "music" and not nolyrics and not shutdown_event.is_set():
                     with state.lock:
                         state.phase = "Lyrics Tagging"
 
@@ -290,6 +291,7 @@ def main():
     parser.add_argument("-o", "--output-dir", help="Override output directory")
     parser.add_argument("-c", "--cookies", help="Path to Netscape-format cookies.txt file")
     parser.add_argument("-f", "--force", action="store_true", help="Force re-fetching lyrics even if already present")
+    parser.add_argument("--nolyrics", action="store_true", help="Skip fetching and embedding lyrics for audio tracks")
     parser.add_argument("--update", action="store_true", help="Update yt-dlp executable")
     parser.add_argument("-h", "--help", action="store_true", help="Show help menu")
 
@@ -361,6 +363,7 @@ def main():
         safe_print("  -o, --output-dir <PATH> Custom output directory")
         safe_print("  -c, --cookies <PATH>    Path to cookies.txt (for age-restricted content)")
         safe_print("  -f, --force             Force re-fetching lyrics even if already present")
+        safe_print("  --nolyrics              Skip fetching and embedding lyrics for audio tracks")
         safe_print("  attach [DIR]            Interactive fzf picker to attach lyrics to untagged audio")
         safe_print("  cleanup [DIR]           Remove YouTube IDs & clutter from filenames (Defaults to ~/Music)")
         safe_print("  lyrics [FILE/DIR...]    Fetch & embed lyrics into local audio (skips existing, -f to force)")
@@ -428,7 +431,8 @@ def main():
     target_dir.mkdir(parents=True, exist_ok=True)
 
     # Execute modular pipeline
-    ret = run_pipeline(profile_name, urls, target_dir, config, cookie_file=cookie_file)
+    nolyrics = args.nolyrics or not config.get("embed_lyrics", True)
+    ret = run_pipeline(profile_name, urls, target_dir, config, cookie_file=cookie_file, nolyrics=nolyrics)
     sys.exit(ret)
 
 

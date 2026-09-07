@@ -210,7 +210,10 @@ def render_dashboard(state: DashboardState, width: int = 100, height: int = 24) 
             d_table.add_row("Format:", f"[green]{format_desc}[/]")
             cover_desc = "1:1 Square Cropped" if "music" in state.profile_name or "flac" in state.profile_name else "Embedded Art"
             d_table.add_row("Cover:", f"[dim]{cover_desc}[/]")
-            lyrics_text = inspect_item.lyrics_status or ("[dim]Pending[/]" if state.phase != "Complete" else "[dim]None[/]")
+            if state.nolyrics:
+                lyrics_text = "[dim]Disabled[/]"
+            else:
+                lyrics_text = inspect_item.lyrics_status or ("[dim]Pending[/]" if state.phase != "Complete" else "[dim]None[/]")
             d_table.add_row("Lyrics:", lyrics_text)
             d_table.add_row("Stage:", f"{stage_style}{inspect_item.stage_text}[/]")
 
@@ -271,7 +274,10 @@ def render_dashboard(state: DashboardState, width: int = 100, height: int = 24) 
 
     # 6. Status & Metrics Footer Panel
     if is_music:
-        lyrics_txt = f"[bold green]{state.synced_lyrics_count} Synced[/], [dim yellow]{state.skipped_lyrics_count} Skipped[/]"
+        if state.nolyrics:
+            lyrics_txt = "[dim]Disabled[/]"
+        else:
+            lyrics_txt = f"[bold green]{state.synced_lyrics_count} Synced[/], [dim yellow]{state.skipped_lyrics_count} Skipped[/]"
         footer_content = (
             f"  🚀 Speed: [bold green]{speed_str}[/]   │   "
             f"⏱️ Elapsed: [bold white]{elapsed_str}[/]   │   "

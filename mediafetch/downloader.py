@@ -56,11 +56,12 @@ class TrackItem:
 
 class DashboardState:
     """Thread-safe coordinator for the live full-screen dashboard."""
-    def __init__(self, profile_name: str, target_dir: Path, items: list[TrackItem]):
+    def __init__(self, profile_name: str, target_dir: Path, items: list[TrackItem], nolyrics: bool = False):
         self.lock = threading.Lock()
         self.profile_name = profile_name
         self.target_dir = target_dir
         self.items = items
+        self.nolyrics = nolyrics
         self.active_idx = 0
         self.total_speed = 0.0
         self.completed_count = 0

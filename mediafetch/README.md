@@ -87,6 +87,9 @@ mf audio
 mf audio "https://www.youtube.com/watch?v=..."
 mf music "https://www.youtube.com/watch?v=..."
 
+# Download music without fetching or embedding lyrics
+mf music --nolyrics "https://www.youtube.com/watch?v=..."
+
 # Download Lossless FLAC + lyrics
 mf flac "https://www.youtube.com/watch?v=..."
 
