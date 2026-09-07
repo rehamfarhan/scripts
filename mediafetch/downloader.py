@@ -68,6 +68,7 @@ class DashboardState:
         self.synced_lyrics_count = 0
         self.skipped_lyrics_count = 0
         self.start_time = time.time()
+        self.end_time = None
         self.phase = "Downloading"  # "Downloading", "Lyrics Tagging", "Complete", "Aborted"
         self.aborted = False
 
@@ -93,6 +94,39 @@ class DashboardState:
                 title = f"⚡ {phase_label}: {pct:.0f}% ({completed}/{total_items} {unit})"
                 sub = f"{completed} of {total_items} Completed"
                 return pct, title, sub
+
+    def get_summary_metrics(self) -> dict:
+        """Calculates final session metrics (duration, total size, average speed, success rate)."""
+        with self.lock:
+            elapsed = int((self.end_time or time.time()) - self.start_time)
+            elapsed_str = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+
+            total_bytes = 0
+            success_count = 0
+            failed_count = 0
+            for item in self.items:
+                if item.status == "done":
+                    success_count += 1
+                    total_bytes += (item.total_bytes or item.downloaded_bytes or 0)
+                elif item.status == "error":
+                    failed_count += 1
+
+            total_size_str = format_bytes(total_bytes) if total_bytes > 0 else "0 B"
+            if elapsed > 0 and total_bytes > 0:
+                avg_speed_val = total_bytes / elapsed
+                avg_speed_str = f"{avg_speed_val / 1048576:.1f} MB/s"
+            else:
+                avg_speed_str = "0.0 MB/s"
+
+            return {
+                "elapsed_str": elapsed_str,
+                "total_bytes": total_bytes,
+                "total_size_str": total_size_str,
+                "avg_speed_str": avg_speed_str,
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "total_count": len(self.items),
+            }
 
 
 class QuietLogger:
@@ -483,7 +517,10 @@ def download_track_worker(
 
     if file_found:
         item.file_path = file_found
-        item.final_size_str = format_bytes(os.path.getsize(file_found))
+        real_sz = os.path.getsize(file_found)
+        item.downloaded_bytes = real_sz
+        item.total_bytes = real_sz
+        item.final_size_str = format_bytes(real_sz)
         is_music = PROFILES.get(state.profile_name, {}).get("type") == "music"
         if is_music:
             artist, title, album = get_audio_metadata(file_found)

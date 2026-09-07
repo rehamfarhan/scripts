@@ -353,40 +353,92 @@ def render_final_summary_panel(state: DashboardState, console):
 
     prof_info = PROFILES.get(state.profile_name, {})
     is_music = prof_info.get("type") == "music"
+    format_desc = prof_info.get("format_desc", state.profile_name.upper())
     unit_label = "Track" if is_music else "Video"
-    title_header = "Track Title" if is_music else "Video Title"
+    title_header = "Title & Artist" if is_music else "Video Title"
     status_header = "Status / Lyrics" if is_music else "Status"
     summary_title = "📥 Download & Tagging Complete" if is_music else "📥 Download Complete"
 
+    metrics = state.get_summary_metrics()
+
+    fmt_map = {
+        "music": "MP3 320k",
+        "audio": "MP3 320k",
+        "flac": "FLAC Lossless",
+        "video": "1080p H.265",
+        "shorts": "1080p MP4",
+        "podcast": "Opus Audio",
+        "archive": "Source Quality"
+    }
+    fmt_cell_default = fmt_map.get(state.profile_name, format_desc[:14])
+
     table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE_HEAVY, expand=True)
-    table.add_column("#", style="dim", width=4)
-    table.add_column(title_header, style="bold white", min_width=32)
-    table.add_column("Size", style="cyan", width=12, justify="right")
-    table.add_column(status_header, style="green", width=22 if is_music else 19, justify="right")
+    table.add_column("#", style="dim", width=4, no_wrap=True)
+    table.add_column(title_header, style="bold white", ratio=3)
+    table.add_column("Format", style="dim cyan", width=14, no_wrap=True)
+    table.add_column("Size", style="cyan", width=10, justify="right", no_wrap=True)
+    table.add_column(status_header, style="green", width=20 if is_music else 16, justify="right", no_wrap=True)
 
     has_age_restricted = False
     has_expired_cookies = False
+    has_skipped_lyrics = False
 
     for idx, item in enumerate(state.items, 1):
-        clean_name = item.title[:45]
+        if is_music:
+            if item.artist and item.artist.lower() not in item.title.lower():
+                clean_name = f"[bold white]{item.title[:42]}[/]\n[dim]{item.artist[:36]}[/]"
+            else:
+                clean_name = f"[bold white]{item.title[:45]}[/]"
+        else:
+            clean_name = f"[bold white]{item.title[:48]}[/]"
+
+        fmt_cell = f"[dim]{fmt_cell_default}[/]"
+
         if item.status == "done":
             status_disp = item.lyrics_status or "[green]✓ Saved[/]"
+            if "Skipped" in (item.lyrics_status or ""):
+                has_skipped_lyrics = True
         elif item.stage_text == "Age Restricted":
             status_disp = "[bold yellow]✗ Age-Restricted[/]"
             has_age_restricted = True
         elif item.stage_text == "Expired Cookies":
             status_disp = "[bold yellow]✗ Expired Cookies[/]"
             has_expired_cookies = True
+        elif item.error_msg:
+            short_err = item.error_msg.split("\n")[0][:20]
+            status_disp = f"[red]✗ Failed ({short_err})[/]"
         else:
             status_disp = "[red]✗ Failed[/]"
 
-        table.add_row(f"{idx:02d}", clean_name, item.final_size_str or "-", status_disp)
+        table.add_row(f"{idx:02d}", clean_name, fmt_cell, item.final_size_str or "-", status_disp)
 
+    curr_w = console.width or 80
     target_short = str(state.target_dir).replace(str(Path.home()), "~")
+    if curr_w < 86 and len(target_short) > 14:
+        parent_name = state.target_dir.parent.name
+        target_display = f"~/{parent_name}" if parent_name and parent_name not in ("home", "") else target_short[:14]
+    else:
+        target_display = target_short
+
     count_str = f"{len(state.items)} {unit_label}{'s' if len(state.items) != 1 else ''}"
+
+    saved_str = f"{metrics['success_count']}/{metrics['total_count']} Saved"
+    saved_styled = f"[bold green]✅ {saved_str}[/]" if metrics["failed_count"] == 0 else f"[bold yellow]⚠️ {saved_str}[/]"
+
+    subtitle_bar = (
+        f"[bold cyan]⏱️ {metrics['elapsed_str']}[/]  │  "
+        f"[bold cyan]📦 {metrics['total_size_str']}[/]  │  "
+        f"[bold cyan]🚀 {metrics['avg_speed_str']}[/]  │  "
+        f"{saved_styled}  │  "
+        f"[dim]📁 {target_display}[/]"
+    )
+
     summary_panel = Panel(
         table,
-        title=f"[bold cyan]{summary_title} • {count_str} ➔ {target_short}[/]",
+        title=f"[bold cyan]{summary_title} • {count_str}[/]",
+        title_align="left",
+        subtitle=subtitle_bar,
+        subtitle_align="center",
         box=box.ROUNDED,
         border_style="cyan"
     )
@@ -407,5 +459,15 @@ def render_final_summary_panel(state: DashboardState, console):
             title="[bold yellow]⚠️  Authentication Notice[/]",
             box=box.ROUNDED,
             border_style="yellow"
+        ))
+
+    if is_music and has_skipped_lyrics and not state.nolyrics:
+        console.print(Panel(
+            "[dim]• One or more tracks could not be matched on LRCLIB automatically.\n"
+            "• You can search manually and pair a local .lrc file using: [cyan]mf attach[/]\n"
+            "• Or retry fetching later with: [cyan]mf lyrics ~/Music/Downloads[/][/]",
+            title="[bold cyan]💡 Lyrics Tip[/]",
+            box=box.ROUNDED,
+            border_style="dim cyan"
         ))
     console.print()

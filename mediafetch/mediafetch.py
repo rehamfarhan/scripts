@@ -212,6 +212,7 @@ def run_pipeline(
                                     state.skipped_lyrics_count += 1
 
                 with state.lock:
+                    state.end_time = time.time()
                     if shutdown_event.is_set():
                         state.phase = "Aborted"
                     else:
