@@ -126,29 +126,59 @@ def render_dashboard(state: DashboardState, width: int = 100, height: int = 24) 
         border_style="cyan"
     ))
 
-    # 3. Queue Panel (Dynamically adapt to terminal height)
-    max_queue_rows = min(18, max(5, height - 14))
+    # 3. Queue Panel (Dynamically adapt to terminal height with smart auto-scroll & scrollbar)
+    max_queue_rows = max(4, height - 12)
     if getattr(state, 'hide_completed', False):
         display_items = [it for it in items if it.status != "done"]
     else:
         display_items = items
 
-    if len(display_items) <= max_queue_rows:
+    total_display = len(display_items)
+    if total_display <= max_queue_rows:
         start_idx = 0
-        end_idx = len(display_items)
+        end_idx = total_display
     else:
-        half = max_queue_rows // 2
-        start_idx = max(0, min(active_idx - half, len(display_items) - max_queue_rows))
-        end_idx = min(len(display_items), start_idx + max_queue_rows)
+        # Auto-scroll: Anchor viewport around active downloads or next queued items
+        active_candidates = [i for i, it in enumerate(display_items) if it.status in ("downloading", "processing")]
+        if active_candidates:
+            focus_idx = active_candidates[0]
+        else:
+            queued_candidates = [i for i, it in enumerate(display_items) if it.status == "queued"]
+            if queued_candidates:
+                focus_idx = queued_candidates[0]
+            else:
+                focus_idx = total_display - 1
+
+        # Keep focus_idx visible with a few rows of finished items above for context
+        lead = max(1, max_queue_rows // 3)
+        start_idx = max(0, min(focus_idx - lead, total_display - max_queue_rows))
+        end_idx = min(total_display, start_idx + max_queue_rows)
 
     visible_items = display_items[start_idx:end_idx]
+    visible_count = len(visible_items)
+    has_scrollbar = total_display > max_queue_rows
+
+    if has_scrollbar and visible_count > 0:
+        thumb_size = max(1, int(round((visible_count / total_display) * visible_count)))
+        max_scroll_items = total_display - visible_count
+        max_scroll_track = visible_count - thumb_size
+        if max_scroll_items > 0:
+            thumb_start = int(round((start_idx / max_scroll_items) * max_scroll_track))
+        else:
+            thumb_start = 0
+        thumb_end = min(visible_count, thumb_start + thumb_size)
+    else:
+        thumb_start = -1
+        thumb_end = -1
 
     q_table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
-    q_table.add_column("num", width=5, style="dim")
+    q_table.add_column("num", width=5, style="dim", no_wrap=True)
     q_table.add_column("name", ratio=3, no_wrap=True)
     q_table.add_column("status", ratio=2, justify="right", no_wrap=True)
+    if has_scrollbar:
+        q_table.add_column("bar", width=1, justify="right", no_wrap=True)
 
-    for it in visible_items:
+    for row_idx, it in enumerate(visible_items):
         idx_str = f"[{it.idx+1:02d}]"
         clean_name = it.title[:38]
 
@@ -175,9 +205,21 @@ def render_dashboard(state: DashboardState, width: int = 100, height: int = 24) 
             name_cell = f"[dim]· {clean_name}[/]"
             status_cell = "[dim]Queued[/]"
 
-        q_table.add_row(idx_str, name_cell, status_cell)
+        if has_scrollbar:
+            if thumb_start <= row_idx < thumb_end:
+                bar_cell = "[bold cyan]█[/]"
+            else:
+                bar_cell = "[dim]│[/]"
+            q_table.add_row(idx_str, name_cell, status_cell, bar_cell)
+        else:
+            q_table.add_row(idx_str, name_cell, status_cell)
 
-    window_label = f"Showing {start_idx+1}-{end_idx} of {len(display_items)}" if len(display_items) > max_queue_rows else f"{len(display_items)} {unit_label}{'s' if len(display_items) != 1 else ''}"
+    if has_scrollbar:
+        pct_scrolled = int((start_idx / (total_display - max_queue_rows)) * 100) if (total_display > max_queue_rows) else 100
+        window_label = f"Showing {start_idx+1}-{end_idx} of {total_display} [dim]({pct_scrolled}%)[/]"
+    else:
+        window_label = f"{total_display} {unit_label}{'s' if total_display != 1 else ''}"
+
     layout["queue"].update(Panel(
         q_table,
         title="[bold cyan]📋 Media Queue[/]",

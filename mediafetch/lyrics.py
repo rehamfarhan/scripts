@@ -475,12 +475,35 @@ def process_local_lyrics_batch(target_path_str: str, force: bool = False) -> boo
 
     # Single-file shortcut
     if target_path.is_file():
+        table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE_HEAVY, expand=True)
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Track Title", style="bold white", min_width=32)
+        table.add_column("Status / Lyrics", justify="right", width=22)
+
         if not force and has_lyrics(target_path):
-            console.print(f"\n[bold green]✔[/] [cyan]{target_path.name}[/] already has lyrics downloaded (.lrc / embedded tags).")
-            console.print("[dim]Use -f / --force to re-query LRCLIB online.[/]\n")
+            table.add_row("01", target_path.name[:45], "[green]✓ Already Exists[/]")
+            console.print()
+            console.print(Panel(
+                table,
+                title=f"[bold cyan]📥 Lyrics Tagging • 1 Track ➔ {str(target_path.parent).replace(str(Path.home()), '~')}[/]",
+                subtitle="[dim]Use -f / --force to re-query LRCLIB online[/]",
+                subtitle_align="left",
+                box=box.ROUNDED,
+                border_style="cyan"
+            ))
+            console.print()
             return True
+
         status = process_lyrics_for_file(target_path, force=force)
-        console.print(f"\n[bold cyan]🎵 Lyrics Tagger:[/] {target_path.name} -> {status}\n")
+        table.add_row("01", target_path.name[:45], status)
+        console.print()
+        console.print(Panel(
+            table,
+            title=f"[bold cyan]📥 Lyrics Tagging Complete • 1 Track ➔ {str(target_path.parent).replace(str(Path.home()), '~')}[/]",
+            box=box.ROUNDED,
+            border_style="cyan"
+        ))
+        console.print()
         return True
 
     # Filter out tracks that already have their lyrics downloaded unless force is requested
@@ -496,36 +519,60 @@ def process_local_lyrics_batch(target_path_str: str, force: bool = False) -> boo
         already_have_lyrics = []
         pending_files = valid_files
 
+    target_short = str(target_path).replace(str(Path.home()), "~")
+
     if not pending_files:
-        msg = f"\n[bold green]✔ All {len(already_have_lyrics)} track(s) in [cyan]{target_path}[/] already have their lyrics downloaded![/]"
-        if ignored_count:
-            msg += f" [dim]({ignored_count} ignored by .mfignore)[/]"
-        msg += "\n[dim]Use -f / --force to re-query LRCLIB online.[/]\n"
-        console.print(msg)
+        table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE_HEAVY, expand=True)
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Track Title", style="bold white", min_width=32)
+        table.add_column("Status / Lyrics", justify="right", width=22)
+        preview = already_have_lyrics[:8]
+        for idx, song_file in enumerate(preview, 1):
+            table.add_row(f"{idx:02d}", song_file.name[:45], "[green]✓ Already Exists[/]")
+        if len(already_have_lyrics) > len(preview):
+            table.add_row("..", f"[dim]... and {len(already_have_lyrics) - len(preview)} more track(s)[/]", "[green]✓[/]")
+
+        console.print()
+        console.print(Panel(
+            table,
+            title=f"[bold cyan]📥 Lyrics Tagging • All {len(already_have_lyrics)} Tracks Have Lyrics ➔ {target_short}[/]",
+            subtitle="[dim]Use -f / --force to re-query LRCLIB online[/]",
+            subtitle_align="left",
+            box=box.ROUNDED,
+            border_style="cyan"
+        ))
+        console.print()
         return True
 
-    info_str = f"\n[bold cyan]🎵 Lyrics Tagger:[/] Found {len(valid_files)} track(s) in [cyan]{target_path}[/]"
-    details = []
-    if already_have_lyrics:
-        details.append(f"{len(already_have_lyrics)} already downloaded (skipped)")
-    if ignored_count:
-        details.append(f"{ignored_count} ignored by .mfignore")
-    details.append(f"{len(pending_files)} to fetch")
-    info_str += f" [dim]({', '.join(details)})[/]\n"
-    console.print(info_str)
+    header_text = (
+        f"  Mode: [bold cyan]LYRICS TAGGER[/]   │   "
+        f"Target: [bold white]{target_short}[/]   │   "
+        f"Queue: [bold cyan]{len(pending_files)} Track{'s' if len(pending_files) != 1 else ''}[/]   │   "
+        f"Source: [bold green]LRCLIB API[/]"
+    )
+    console.print()
+    console.print(Panel(
+        header_text,
+        title="[bold cyan]🎵 Media Fetcher (mf lyrics)[/]",
+        title_align="left",
+        box=box.ROUNDED,
+        border_style="cyan"
+    ))
 
     results = []
 
     with Progress(
-        SpinnerColumn("dots"),
-        TextColumn("[bold cyan]{task.description}"),
-        BarColumn(bar_width=25),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        SpinnerColumn("dots", style="bold cyan"),
+        TextColumn("[bold white]{task.description}"),
+        BarColumn(bar_width=30, complete_style="bold cyan", finished_style="bold green"),
+        TextColumn("[bold cyan]{task.percentage:>3.0f}%"),
+        TextColumn("[dim]({task.completed}/{task.total})[/]"),
         TimeElapsedColumn(),
         console=console
     ) as progress:
-        task = progress.add_task("[cyan]Processing lyrics...", total=len(pending_files))
+        task = progress.add_task("[cyan]Starting...", total=len(pending_files))
         for song_file in pending_files:
+            progress.update(task, description=f"[cyan]Fetching:[/] [bold white]{song_file.name[:35]}[/]")
             status = process_lyrics_for_file(song_file, force=force)
             results.append((song_file.name, status))
             progress.advance(task)
@@ -533,7 +580,7 @@ def process_local_lyrics_batch(target_path_str: str, force: bool = False) -> boo
     table = Table(show_header=True, header_style="bold cyan", box=box.SIMPLE_HEAVY, expand=True)
     table.add_column("#", style="dim", width=4)
     table.add_column("Track Title", style="bold white", min_width=32)
-    table.add_column("Lyrics Status", justify="right")
+    table.add_column("Status / Lyrics", justify="right", width=22)
 
     for idx, (filename, status) in enumerate(results, 1):
         table.add_row(f"{idx:02d}", filename[:45], status)
@@ -543,7 +590,7 @@ def process_local_lyrics_batch(target_path_str: str, force: bool = False) -> boo
         summary_items.append(f"{len(already_have_lyrics)} Already Downloaded")
     if ignored_count:
         summary_items.append(f"{ignored_count} Ignored")
-    summary_title = f"[bold cyan]🎵 Lyrics Tagging Complete[/] [dim]• {' • '.join(summary_items)}[/]"
+    summary_title = f"[bold cyan]📥 Lyrics Tagging Complete • {' • '.join(summary_items)} ➔ {target_short}[/]"
 
     console.print()
     console.print(Panel(table, title=summary_title, box=box.ROUNDED, border_style="cyan"))
