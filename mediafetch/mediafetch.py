@@ -28,6 +28,7 @@ if str(SCRIPT_DIR) not in sys.path:
 try:
     from .utils import (
         load_config,
+        find_cookie_file,
         safe_print,
         get_clipboard_url,
         check_dependencies,
@@ -48,6 +49,7 @@ try:
 except ImportError:
     from utils import (
         load_config,
+        find_cookie_file,
         safe_print,
         get_clipboard_url,
         check_dependencies,
@@ -67,7 +69,13 @@ except ImportError:
     )
 
 
-def run_pipeline(profile_name: str, urls: list[str], target_dir: Path, config: dict) -> int:
+def run_pipeline(
+    profile_name: str,
+    urls: list[str],
+    target_dir: Path,
+    config: dict,
+    cookie_file: Path = None
+) -> int:
     """Orchestrates the full-screen alternate-buffer download & tagging pipeline."""
     # Lazily import heavy rendering & downloader engines
     try:
@@ -114,7 +122,7 @@ def run_pipeline(profile_name: str, urls: list[str], target_dir: Path, config: d
     signal.signal(signal.SIGTERM, sig_handler)
 
     # Fast track preparation (<0.01s for single URLs)
-    track_items = prepare_track_items(urls, shutdown_event)
+    track_items = prepare_track_items(urls, shutdown_event, cookie_file=cookie_file)
     if not track_items or shutdown_event.is_set():
         if shutdown_event.is_set():
             safe_print(f"\n{YELLOW}Cancelled.{RESET}\n")
@@ -122,8 +130,11 @@ def run_pipeline(profile_name: str, urls: list[str], target_dir: Path, config: d
         safe_print(f"{RED}Error: No media tracks found to download.{RESET}\n")
         return 1
 
+    cookies_mode = config.get("cookies_mode", "auto")
+    initial_cookie = cookie_file if cookies_mode == "always" else None
+
     state = DashboardState(profile_name, target_dir, track_items)
-    base_opts = build_ydl_options(profile_name, target_dir, config)
+    base_opts = build_ydl_options(profile_name, target_dir, config, cookie_file=initial_cookie)
     max_workers = min(len(track_items), int(config.get("parallel_downloads", 3)))
 
     # Start non-blocking keyboard listener ('q' to abort, 'c' to clear completed)
@@ -157,7 +168,15 @@ def run_pipeline(profile_name: str, urls: list[str], target_dir: Path, config: d
                 # Phase 1: Parallel Downloads
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = [
-                        executor.submit(download_track_worker, item, base_opts, state, shutdown_event)
+                        executor.submit(
+                            download_track_worker,
+                            item,
+                            base_opts,
+                            state,
+                            shutdown_event,
+                            cookie_file=cookie_file,
+                            cookies_mode=cookies_mode
+                        )
                         for item in track_items
                     ]
                     for f in as_completed(futures):
@@ -269,11 +288,13 @@ def main():
     parser.add_argument("--list", action="store_true", help="Inspect available video/audio streams (-F)")
     parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive menu")
     parser.add_argument("-o", "--output-dir", help="Override output directory")
+    parser.add_argument("-c", "--cookies", help="Path to Netscape-format cookies.txt file")
     parser.add_argument("-f", "--force", action="store_true", help="Force re-fetching lyrics even if already present")
     parser.add_argument("--update", action="store_true", help="Update yt-dlp executable")
     parser.add_argument("-h", "--help", action="store_true", help="Show help menu")
 
     args, unknown = parser.parse_known_args()
+    cookie_file = find_cookie_file(args.cookies, config)
 
     # Subcommand: attach
     if args.profile_or_url == "attach":
@@ -338,6 +359,7 @@ def main():
         safe_print("  -i, --interactive       Launch interactive prompt")
         safe_print("  --list <URL>            Inspect available stream formats")
         safe_print("  -o, --output-dir <PATH> Custom output directory")
+        safe_print("  -c, --cookies <PATH>    Path to cookies.txt (for age-restricted content)")
         safe_print("  -f, --force             Force re-fetching lyrics even if already present")
         safe_print("  attach [DIR]            Interactive fzf picker to attach lyrics to untagged audio")
         safe_print("  cleanup [DIR]           Remove YouTube IDs & clutter from filenames (Defaults to ~/Music)")
@@ -362,7 +384,11 @@ def main():
         if not target_url:
             safe_print(f"{RED}Error: Please specify a URL to inspect format streams.{RESET}")
             sys.exit(1)
-        subprocess.run(["yt-dlp", "-F", target_url])
+        list_cmd = ["yt-dlp"]
+        if cookie_file and Path(cookie_file).exists():
+            list_cmd.extend(["--cookies", str(cookie_file)])
+        list_cmd.extend(["-F", target_url])
+        subprocess.run(list_cmd)
         sys.exit(0)
 
     # Profile & URL Resolution
@@ -402,7 +428,7 @@ def main():
     target_dir.mkdir(parents=True, exist_ok=True)
 
     # Execute modular pipeline
-    ret = run_pipeline(profile_name, urls, target_dir, config)
+    ret = run_pipeline(profile_name, urls, target_dir, config, cookie_file=cookie_file)
     sys.exit(ret)
 
 

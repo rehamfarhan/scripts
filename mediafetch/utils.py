@@ -47,7 +47,9 @@ DEFAULT_CONFIG = {
     "music_dir": str(DEFAULT_MUSIC_DIR),
     "embed_lyrics": True,
     "sub_langs": "en.*",
-    "parallel_downloads": 3
+    "parallel_downloads": 3,
+    "cookie_file": None,
+    "cookies_mode": "auto"  # "auto" (retry on age-restriction) or "always"
 }
 
 
@@ -79,6 +81,36 @@ def load_config() -> dict:
             return cfg
     except Exception:
         return dict(DEFAULT_CONFIG)
+
+
+def find_cookie_file(cli_path: str = None, config: dict = None) -> Path | None:
+    """Finds a Netscape-formatted cookies.txt file across standard locations.
+
+    Search priority:
+      1. Explicit CLI argument (--cookies <path>)
+      2. Config setting ("cookie_file" in config.json)
+      3. Standard config directory (~/.config/mediafetch/cookies.txt)
+      4. Script directory (mediafetch/cookies.txt)
+      5. Current working directory (./cookies.txt)
+    """
+    candidates = []
+    if cli_path:
+        candidates.append(Path(cli_path).expanduser().resolve())
+
+    if config and config.get("cookie_file"):
+        candidates.append(Path(config["cookie_file"]).expanduser().resolve())
+
+    candidates.append(CONFIG_DIR / "cookies.txt")
+    candidates.append(Path(__file__).parent / "cookies.txt")
+    candidates.append(Path.cwd() / "cookies.txt")
+
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return candidate
+        except OSError:
+            continue
+    return None
 
 
 # ==============================================================================

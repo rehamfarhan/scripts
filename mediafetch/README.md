@@ -117,6 +117,26 @@ mf lyrics /path/to/song.mp3
 mf lyrics ~/Music
 mf lyrics -f ~/Music
 
+# Download age-restricted videos using cookies
+mf video -c ~/.config/mediafetch/cookies.txt "https://www.youtube.com/watch?v=..."
+# (Or place cookies.txt in ~/.config/mediafetch/cookies.txt for automatic on-demand retry)
+
 # Inspect available stream formats only
 mf --list "https://www.youtube.com/watch?v=..."
 ```
+
+---
+
+## 🍪 Cookies & Age-Restricted Content
+
+YouTube requires sign-in authentication to access age-restricted videos. `mediafetch` includes a zero-risk **Smart Cookie Fallback**:
+- Normal downloads run anonymously without cookies to protect your Google account from session rotation or bot-flagging.
+- If an age-restricted video is encountered, `mediafetch` automatically retries using your `cookies.txt` and displays `Retrying (Cookies)`.
+- If cookies are expired or missing, `mediafetch` reports `Age-Restricted` or `Expired Cookies` with guidance on updating your cookies.
+
+### Providing Cookies
+You can provide a Netscape-formatted `cookies.txt` via:
+1. **Standard location**: Save to `~/.config/mediafetch/cookies.txt` (or in the `mediafetch/` folder).
+2. **CLI flag**: `mf -c /path/to/cookies.txt <URL>` or `mf --cookies /path/to/cookies.txt <URL>`.
+3. **Configuration**: Set `"cookie_file": "/path/to/cookies.txt"` and optionally `"cookies_mode": "always"` in `~/.config/mediafetch/config.json`.
+

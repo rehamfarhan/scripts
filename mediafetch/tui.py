@@ -167,7 +167,10 @@ def render_dashboard(state: DashboardState, width: int = 100, height: int = 24) 
             status_cell = f"[magenta]{it.stage_text}[/]"
         elif it.status == "error":
             name_cell = f"[red]✗ {clean_name}[/]"
-            status_cell = f"[red]{it.stage_text or 'Error'}[/]"
+            if it.stage_text in ("Age Restricted", "Expired Cookies"):
+                status_cell = f"[bold yellow]{it.stage_text}[/]"
+            else:
+                status_cell = f"[red]{it.stage_text or 'Error'}[/]"
         else:
             name_cell = f"[dim]· {clean_name}[/]"
             status_cell = "[dim]Queued[/]"
@@ -193,6 +196,13 @@ def render_dashboard(state: DashboardState, width: int = 100, height: int = 24) 
     inspector_title = "[bold cyan]ℹ️ Track Inspector[/]" if is_music else "[bold cyan]ℹ️ Video Inspector[/]"
 
     if inspect_item:
+        if inspect_item.status == "error" and inspect_item.stage_text in ("Age Restricted", "Expired Cookies"):
+            stage_style = "[bold yellow]"
+        elif inspect_item.status == "processing":
+            stage_style = "[magenta]"
+        else:
+            stage_style = "[cyan]"
+
         if is_music:
             d_table.add_row("Track:", f"[bold white]{inspect_item.title[:26]}[/]")
             d_table.add_row("Artist:", f"{inspect_item.artist[:26] or '[dim]Unknown[/]'}")
@@ -202,7 +212,6 @@ def render_dashboard(state: DashboardState, width: int = 100, height: int = 24) 
             d_table.add_row("Cover:", f"[dim]{cover_desc}[/]")
             lyrics_text = inspect_item.lyrics_status or ("[dim]Pending[/]" if state.phase != "Complete" else "[dim]None[/]")
             d_table.add_row("Lyrics:", lyrics_text)
-            stage_style = "[magenta]" if inspect_item.status == "processing" else "[cyan]"
             d_table.add_row("Stage:", f"{stage_style}{inspect_item.stage_text}[/]")
 
             if inspect_item.status == "downloading":
@@ -220,7 +229,6 @@ def render_dashboard(state: DashboardState, width: int = 100, height: int = 24) 
             else:
                 d_table.add_row("Subtitles:", "[dim]English (Auto-Embed)[/]")
             d_table.add_row("Thumbnail:", "[dim]Embedded PNG[/]")
-            stage_style = "[magenta]" if inspect_item.status == "processing" else "[cyan]"
             d_table.add_row("Stage:", f"{stage_style}{inspect_item.stage_text}[/]")
 
             if inspect_item.status == "downloading":
@@ -306,14 +314,24 @@ def render_final_summary_panel(state: DashboardState, console):
     table.add_column("#", style="dim", width=4)
     table.add_column(title_header, style="bold white", min_width=32)
     table.add_column("Size", style="cyan", width=12, justify="right")
-    table.add_column(status_header, style="green", width=20 if is_music else 12, justify="right")
+    table.add_column(status_header, style="green", width=22 if is_music else 19, justify="right")
+
+    has_age_restricted = False
+    has_expired_cookies = False
 
     for idx, item in enumerate(state.items, 1):
         clean_name = item.title[:45]
-        if is_music:
-            status_disp = item.lyrics_status or ("[green]✓ Saved[/]" if item.status == "done" else "[red]✗ Failed[/]")
+        if item.status == "done":
+            status_disp = item.lyrics_status or "[green]✓ Saved[/]"
+        elif item.stage_text == "Age Restricted":
+            status_disp = "[bold yellow]✗ Age-Restricted[/]"
+            has_age_restricted = True
+        elif item.stage_text == "Expired Cookies":
+            status_disp = "[bold yellow]✗ Expired Cookies[/]"
+            has_expired_cookies = True
         else:
-            status_disp = "[green]✓ Saved[/]" if item.status == "done" else "[red]✗ Failed[/]"
+            status_disp = "[red]✗ Failed[/]"
+
         table.add_row(f"{idx:02d}", clean_name, item.final_size_str or "-", status_disp)
 
     target_short = str(state.target_dir).replace(str(Path.home()), "~")
@@ -326,4 +344,20 @@ def render_final_summary_panel(state: DashboardState, console):
     )
     console.print()
     console.print(summary_panel)
+
+    if has_age_restricted or has_expired_cookies:
+        tip_lines = []
+        if has_age_restricted:
+            tip_lines.append("[yellow]• One or more tracks are age-restricted and require YouTube sign-in authentication.[/]")
+        if has_expired_cookies:
+            tip_lines.append("[yellow]• The provided cookies in cookies.txt are expired or have been rotated by YouTube.[/]")
+        tip_lines.append("[dim]• Place fresh Netscape-formatted cookies at: [cyan]~/.config/mediafetch/cookies.txt[/][/]")
+        tip_lines.append("[dim]  or run mediafetch with: [cyan]mf --cookies <path/to/cookies.txt> [URL][/][/]")
+
+        console.print(Panel(
+            "\n".join(tip_lines),
+            title="[bold yellow]⚠️  Authentication Notice[/]",
+            box=box.ROUNDED,
+            border_style="yellow"
+        ))
     console.print()

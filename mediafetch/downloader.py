@@ -102,7 +102,11 @@ class QuietLogger:
     def error(self, msg): pass
 
 
-def prepare_track_items(urls: list[str], shutdown_event: threading.Event = None) -> list[TrackItem]:
+def prepare_track_items(
+    urls: list[str],
+    shutdown_event: threading.Event = None,
+    cookie_file: Path = None
+) -> list[TrackItem]:
     """Expands playlist URLs if needed, or immediately returns direct TrackItems (<0.01s)."""
     has_playlist = any(is_playlist_url(u) for u in urls)
     if not has_playlist:
@@ -121,6 +125,8 @@ def prepare_track_items(urls: list[str], shutdown_event: threading.Event = None)
         "no_warnings": True,
         "logger": QuietLogger(),
     }
+    if cookie_file and Path(cookie_file).exists():
+        flat_opts["cookiefile"] = str(cookie_file)
     with yt_dlp.YoutubeDL(flat_opts) as ydl:
         for u in urls:
             if shutdown_event and shutdown_event.is_set():
@@ -188,7 +194,12 @@ def prepare_track_items(urls: list[str], shutdown_event: threading.Event = None)
     ]
 
 
-def build_ydl_options(profile_name: str, target_dir: Path, config: dict) -> dict:
+def build_ydl_options(
+    profile_name: str,
+    target_dir: Path,
+    config: dict,
+    cookie_file: Path = None
+) -> dict:
     """Builds native yt_dlp options dictionary corresponding to profile."""
     out_template = str(target_dir / "%(title)s [%(id)s].%(ext)s")
 
@@ -199,6 +210,9 @@ def build_ydl_options(profile_name: str, target_dir: Path, config: dict) -> dict
         "noprogress": True,
         "logger": QuietLogger(),
     }
+
+    if cookie_file and Path(cookie_file).exists():
+        opts["cookiefile"] = str(cookie_file)
 
     if shutil.which("aria2c"):
         aria_conns = str(config.get("aria2_connections", 8))
@@ -277,7 +291,7 @@ def build_ydl_options(profile_name: str, target_dir: Path, config: dict) -> dict
             "writethumbnail": True,
             "writesubtitles": True,
             "writeautomaticsub": True,
-            "subtitleslangs": ["en.*"],
+            "subtitleslangs": ["en", "en-US", "en-GB"],
             "postprocessors": [
                 {"key": "FFmpegVideoConvertor", "preferedformat": "mkv"},
                 {"key": "FFmpegEmbedSubtitle"},
@@ -289,13 +303,37 @@ def build_ydl_options(profile_name: str, target_dir: Path, config: dict) -> dict
     return opts
 
 
+def is_age_restricted_error(err_str: str) -> bool:
+    """Checks if an error string indicates YouTube age-restriction / sign-in requirement."""
+    lower = err_str.lower()
+    return any(p in lower for p in [
+        "confirm your age",
+        "age-restricted",
+        "sign in to confirm",
+        "login required",
+        "use --cookies"
+    ])
+
+
+def is_cookie_invalid_error(err_str: str) -> bool:
+    """Checks if an error string indicates expired or invalid cookies."""
+    lower = err_str.lower()
+    return any(p in lower for p in [
+        "cookies are no longer valid",
+        "cookies are expired",
+        "could not decrypt"
+    ])
+
+
 def download_track_worker(
     item: TrackItem,
     base_opts: dict,
     state: DashboardState,
-    shutdown_event: threading.Event
+    shutdown_event: threading.Event,
+    cookie_file: Path = None,
+    cookies_mode: str = "auto"
 ):
-    """Executes download of a single track with real-time cancellation check."""
+    """Executes download of a single track with real-time cancellation check and cookie fallback."""
     if shutdown_event.is_set():
         item.status = "error"
         item.stage_text = "Aborted"
@@ -303,6 +341,10 @@ def download_track_worker(
 
     import yt_dlp
     ydl_opts = dict(base_opts)
+
+    # If user configured 'always' mode and cookie_file exists, use cookies immediately
+    if cookies_mode == "always" and cookie_file and Path(cookie_file).exists():
+        ydl_opts["cookiefile"] = str(cookie_file)
 
     def progress_hook(d):
         if shutdown_event.is_set():
@@ -358,65 +400,101 @@ def download_track_worker(
     ydl_opts["progress_hooks"] = [progress_hook]
     ydl_opts["postprocessor_hooks"] = [postprocessor_hook]
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    def execute_dl(opts_dict):
+        with yt_dlp.YoutubeDL(opts_dict) as ydl_inst:
             if shutdown_event.is_set():
-                item.status = "error"
-                item.stage_text = "Aborted"
-                return
+                raise yt_dlp.utils.DownloadCancelled("Download aborted by user")
+            info_res = ydl_inst.extract_info(item.url, download=True)
+            return info_res, ydl_inst
 
-            info = ydl.extract_info(item.url, download=True)
-            if not info:
-                item.status = "error"
-                item.stage_text = "Failed"
-                return
-
-            if "title" in info and info["title"]:
-                item.title = clean_title(info["title"])
-            if "artist" in info and info["artist"]:
-                item.artist = clean_title(info["artist"])
-            if "album" in info and info["album"]:
-                item.album = clean_title(info["album"])
-
-            file_found = None
-            if "requested_downloads" in info:
-                for req in info["requested_downloads"]:
-                    if "filepath" in req and os.path.exists(req["filepath"]):
-                        file_found = Path(req["filepath"])
-                        break
-
-            if not file_found:
-                prep_path = Path(ydl.prepare_filename(info))
-                if prep_path.exists():
-                    file_found = prep_path
-
-            if file_found:
-                item.file_path = file_found
-                item.final_size_str = format_bytes(os.path.getsize(file_found))
-                is_music = PROFILES.get(state.profile_name, {}).get("type") == "music"
-                if is_music:
-                    artist, title, album = get_audio_metadata(file_found)
-                    if artist:
-                        item.artist = artist
-                    if album:
-                        item.album = album
-
-            item.status = "done"
-            item.stage_text = "Done"
-            with state.lock:
-                state.completed_count += 1
-
+    try:
+        info, ydl = execute_dl(ydl_opts)
     except yt_dlp.utils.DownloadCancelled:
         item.status = "error"
         item.stage_text = "Aborted"
+        return
     except Exception as e:
         if shutdown_event.is_set():
             item.status = "error"
             item.stage_text = "Aborted"
+            return
+
+        err_str = str(e)
+        age_restricted = is_age_restricted_error(err_str)
+
+        # Automatic retry with cookies if available and not yet attempted
+        if age_restricted and cookie_file and Path(cookie_file).exists() and "cookiefile" not in ydl_opts and not shutdown_event.is_set():
+            item.stage_text = "Retrying (Cookies)"
+            retry_opts = dict(ydl_opts)
+            retry_opts["cookiefile"] = str(cookie_file)
+            try:
+                info, ydl = execute_dl(retry_opts)
+            except yt_dlp.utils.DownloadCancelled:
+                item.status = "error"
+                item.stage_text = "Aborted"
+                return
+            except Exception as retry_err:
+                retry_str = str(retry_err)
+                item.status = "error"
+                if is_cookie_invalid_error(retry_str) or is_age_restricted_error(retry_str):
+                    item.stage_text = "Expired Cookies" if is_cookie_invalid_error(retry_str) else "Age Restricted"
+                    item.error_msg = "Age-restricted video: YouTube cookies expired or invalid"
+                else:
+                    item.stage_text = "Error"
+                    item.error_msg = retry_str
+                return
         else:
             item.status = "error"
-            item.stage_text = "Error"
-            item.error_msg = str(e)
+            if age_restricted:
+                item.stage_text = "Age Restricted"
+                item.error_msg = "Age-restricted video: requires YouTube cookies"
+            elif is_cookie_invalid_error(err_str):
+                item.stage_text = "Expired Cookies"
+                item.error_msg = "YouTube cookies in cookies.txt are no longer valid"
+            else:
+                item.stage_text = "Error"
+                item.error_msg = err_str
+            return
+
+    if not info:
+        item.status = "error"
+        item.stage_text = "Failed"
+        return
+
+    if "title" in info and info["title"]:
+        item.title = clean_title(info["title"])
+    if "artist" in info and info["artist"]:
+        item.artist = clean_title(info["artist"])
+    if "album" in info and info["album"]:
+        item.album = clean_title(info["album"])
+
+    file_found = None
+    if "requested_downloads" in info:
+        for req in info["requested_downloads"]:
+            if "filepath" in req and os.path.exists(req["filepath"]):
+                file_found = Path(req["filepath"])
+                break
+
+    if not file_found:
+        prep_path = Path(ydl.prepare_filename(info))
+        if prep_path.exists():
+            file_found = prep_path
+
+    if file_found:
+        item.file_path = file_found
+        item.final_size_str = format_bytes(os.path.getsize(file_found))
+        is_music = PROFILES.get(state.profile_name, {}).get("type") == "music"
+        if is_music:
+            artist, title, album = get_audio_metadata(file_found)
+            if artist:
+                item.artist = artist
+            if album:
+                item.album = album
+
+    item.status = "done"
+    item.stage_text = "Done"
+    with state.lock:
+        state.completed_count += 1
 
 
 def cleanup_partial_downloads(target_dir: Path):
