@@ -11,6 +11,7 @@ Modular architecture:
 
 import sys
 import os
+import re
 import signal
 import shutil
 import argparse
@@ -123,13 +124,20 @@ def run_pipeline(
     signal.signal(signal.SIGTERM, sig_handler)
 
     # Fast track preparation (<0.01s for single URLs)
-    track_items = prepare_track_items(urls, shutdown_event, cookie_file=cookie_file)
+    track_items, playlist_title = prepare_track_items(urls, shutdown_event, cookie_file=cookie_file)
     if not track_items or shutdown_event.is_set():
         if shutdown_event.is_set():
             safe_print(f"\n{YELLOW}Cancelled.{RESET}\n")
             return 130
         safe_print(f"{RED}Error: No media tracks found to download.{RESET}\n")
         return 1
+
+    # Route into album subfolder if enabled and multi-track playlist detected
+    if playlist_title and config.get("album_subfolders", True) and len(track_items) > 1:
+        safe_album = re.sub(r'[\/\\:*?"<>|]', '', playlist_title).strip()
+        if safe_album:
+            target_dir = target_dir / safe_album
+            target_dir.mkdir(parents=True, exist_ok=True)
 
     cookies_mode = config.get("cookies_mode", "auto")
     initial_cookie = cookie_file if cookies_mode == "always" else None
@@ -237,6 +245,10 @@ def run_pipeline(
         console.print()
         return 130
 
+    # Automatically strip YouTube IDs and clutter from filenames post-session
+    if config.get("auto_cleanup", True) and not shutdown_event.is_set():
+        cleanup_directory(str(target_dir), quiet=True)
+
     # Print final pristine summary card into normal terminal scrollback
     render_final_summary_panel(state, console)
     return 0
@@ -293,10 +305,13 @@ def main():
     parser.add_argument("-c", "--cookies", help="Path to Netscape-format cookies.txt file")
     parser.add_argument("-f", "--force", action="store_true", help="Force re-fetching lyrics even if already present")
     parser.add_argument("--nolyrics", action="store_true", help="Skip fetching and embedding lyrics for audio tracks")
+    parser.add_argument("--no-album-dir", action="store_true", help="Do not create a subfolder for albums or playlists")
     parser.add_argument("--update", action="store_true", help="Update yt-dlp executable")
     parser.add_argument("-h", "--help", action="store_true", help="Show help menu")
 
     args, unknown = parser.parse_known_args()
+    if args.no_album_dir:
+        config["album_subfolders"] = False
     cookie_file = find_cookie_file(args.cookies, config)
 
     # Subcommand: attach
@@ -365,6 +380,7 @@ def main():
         safe_print("  -c, --cookies <PATH>    Path to cookies.txt (for age-restricted content)")
         safe_print("  -f, --force             Force re-fetching lyrics even if already present")
         safe_print("  --nolyrics              Skip fetching and embedding lyrics for audio tracks")
+        safe_print("  --no-album-dir          Do not create subfolders for albums or playlists")
         safe_print("  attach [DIR]            Interactive fzf picker to attach lyrics to untagged audio")
         safe_print("  cleanup [DIR]           Remove YouTube IDs & clutter from filenames (Defaults to ~/Music)")
         safe_print("  lyrics [FILE/DIR...]    Fetch & embed lyrics into local audio (skips existing, -f to force)")

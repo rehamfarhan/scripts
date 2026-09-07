@@ -12,10 +12,10 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
-    from .utils import clean_title, format_bytes, PROFILES, PROFILE_ALIASES, resolve_profile_name
+    from .utils import clean_title, format_bytes, PROFILES, PROFILE_ALIASES, resolve_profile_name, get_mutagen
     from .lyrics import get_audio_metadata
 except ImportError:
-    from utils import clean_title, format_bytes, PROFILES, PROFILE_ALIASES, resolve_profile_name
+    from utils import clean_title, format_bytes, PROFILES, PROFILE_ALIASES, resolve_profile_name, get_mutagen
     from lyrics import get_audio_metadata
 
 
@@ -27,13 +27,15 @@ def is_playlist_url(url: str) -> bool:
 
 class TrackItem:
     """Represents a single track or video in the pipeline."""
-    def __init__(self, idx: int, url: str, title: str, item_id: str = "", artist: str = "", album: str = ""):
+    def __init__(self, idx: int, url: str, title: str, item_id: str = "", artist: str = "", album: str = "", track_number: int = 1, total_tracks: int = 1):
         self.idx = idx
         self.url = url
         self.title = title
         self.item_id = item_id
         self.artist = artist
         self.album = album
+        self.track_number = track_number
+        self.total_tracks = total_tracks
 
         # Fallback parse "Artist - Title" if present
         if not self.artist and " - " in self.title:
@@ -141,19 +143,20 @@ def prepare_track_items(
     urls: list[str],
     shutdown_event: threading.Event = None,
     cookie_file: Path = None
-) -> list[TrackItem]:
-    """Expands playlist URLs if needed, or immediately returns direct TrackItems (<0.01s)."""
+) -> tuple[list[TrackItem], str]:
+    """Expands playlist URLs if needed, returning TrackItems and detected playlist/album title (<0.01s for single URLs)."""
     has_playlist = any(is_playlist_url(u) for u in urls)
     if not has_playlist:
         items = []
         for idx, u in enumerate(urls):
             fallback_title = "Resolving Stream..." if len(urls) == 1 else f"Media Item {idx+1}"
-            items.append(TrackItem(idx, u, fallback_title))
-        return items
+            items.append(TrackItem(idx, u, fallback_title, track_number=idx+1, total_tracks=len(urls)))
+        return items, ""
 
     import yt_dlp
     expanded = []
     seen_ids = set()
+    playlist_title = ""
     flat_opts = {
         "extract_flat": True,
         "quiet": True,
@@ -171,7 +174,9 @@ def prepare_track_items(
                 continue
             try:
                 info = ydl.extract_info(u, download=False)
-                playlist_title = clean_title(info.get("title") or "") if info else ""
+                p_title = clean_title(info.get("title") or "") if info else ""
+                if p_title and not playlist_title:
+                    playlist_title = p_title
                 playlist_uploader = clean_title(info.get("uploader") or info.get("channel") or "") if info else ""
 
                 if info and "entries" in info:
@@ -216,17 +221,21 @@ def prepare_track_items(
         for idx, u in enumerate(urls):
             expanded.append({"url": u, "title": "Media Item"})
 
-    return [
+    total = len(expanded)
+    items = [
         TrackItem(
             i,
             it["url"],
             it.get("title", "Media Item"),
             it.get("id", ""),
             it.get("artist", ""),
-            it.get("album", "")
+            it.get("album", playlist_title),
+            track_number=i + 1,
+            total_tracks=total
         )
         for i, it in enumerate(expanded)
     ]
+    return items, playlist_title
 
 
 def build_ydl_options(
@@ -377,6 +386,12 @@ def download_track_worker(
     import yt_dlp
     ydl_opts = dict(base_opts)
 
+    # Per-item track numbering for multi-track sets: "01 Track Title [%(id)s].%(ext)s" (no hyphen)
+    if item.total_tracks > 1:
+        pad = 3 if item.total_tracks >= 100 else 2
+        prefix = f"{item.track_number:0{pad}d} "
+        ydl_opts["outtmpl"] = str(target_dir / f"{prefix}%(title)s [%(id)s].%(ext)s")
+
     # If user configured 'always' mode and cookie_file exists, use cookies immediately
     if cookies_mode == "always" and cookie_file and Path(cookie_file).exists():
         ydl_opts["cookiefile"] = str(cookie_file)
@@ -516,6 +531,17 @@ def download_track_worker(
             file_found = prep_path
 
     if file_found:
+        # Automatically strip YouTube ID and clutter immediately upon download
+        clean_stem = clean_title(file_found.stem)
+        if clean_stem and clean_stem != file_found.stem:
+            cleaned_path = file_found.with_name(clean_stem + file_found.suffix)
+            if not cleaned_path.exists() or cleaned_path == file_found:
+                try:
+                    file_found.rename(cleaned_path)
+                    file_found = cleaned_path
+                except Exception:
+                    pass
+
         item.file_path = file_found
         real_sz = os.path.getsize(file_found)
         item.downloaded_bytes = real_sz
@@ -528,6 +554,39 @@ def download_track_worker(
                 item.artist = artist
             if album:
                 item.album = album
+
+            # Embed audio track metadata tags (TRCK in ID3, TRACKNUMBER in FLAC)
+            try:
+                mut = get_mutagen()
+                if mut and file_found.exists():
+                    ext = file_found.suffix.lower()
+                    if ext == ".mp3":
+                        try:
+                            audio = mut["ID3"](file_found)
+                        except mut["ID3NoHeaderError"]:
+                            audio = mut["ID3"]()
+                        audio.delall("TRCK")
+                        audio.add(mut["TRCK"](
+                            encoding=mut["Encoding"].UTF8,
+                            text=f"{item.track_number}/{item.total_tracks}"
+                        ))
+                        if item.album and "TALB" not in audio:
+                            audio.add(mut["TALB"](encoding=mut["Encoding"].UTF8, text=item.album))
+                        if item.artist and "TPE1" not in audio:
+                            audio.add(mut["TPE1"](encoding=mut["Encoding"].UTF8, text=item.artist))
+                        audio.save(file_found)
+                    elif ext == ".flac":
+                        audio = mut["FLAC"](file_found)
+                        if audio:
+                            audio["TRACKNUMBER"] = str(item.track_number)
+                            audio["TRACKTOTAL"] = str(item.total_tracks)
+                            if item.album and "album" not in audio:
+                                audio["album"] = item.album
+                            if item.artist and "artist" not in audio:
+                                audio["artist"] = item.artist
+                            audio.save()
+            except Exception:
+                pass
 
     item.status = "done"
     item.stage_text = "Done"

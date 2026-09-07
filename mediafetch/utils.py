@@ -46,10 +46,13 @@ DEFAULT_CONFIG = {
     "video_dir": str(DEFAULT_VIDEO_DIR),
     "music_dir": str(DEFAULT_MUSIC_DIR),
     "embed_lyrics": True,
-    "sub_langs": "en.*",
+    "sub_langs": ["en", "en-US", "en-GB"],
     "parallel_downloads": 3,
     "cookie_file": None,
-    "cookies_mode": "auto"  # "auto" (retry on age-restriction) or "always"
+    "cookies_mode": "auto",  # "auto" (retry on age-gate) or "always"
+    "album_subfolders": True,
+    "track_numbering": True,
+    "auto_cleanup": True,
 }
 
 
@@ -168,7 +171,7 @@ def get_mutagen():
     _MUTAGEN_TRIED = True
     try:
         from mutagen import File
-        from mutagen.id3 import ID3, USLT, TIT2, TPE1, TALB, Encoding, ID3NoHeaderError
+        from mutagen.id3 import ID3, USLT, TIT2, TPE1, TALB, TRCK, Encoding, ID3NoHeaderError
         from mutagen.mp3 import MP3
         from mutagen.flac import FLAC
         _MUTAGEN_CACHE = {
@@ -178,6 +181,7 @@ def get_mutagen():
             "TIT2": TIT2,
             "TPE1": TPE1,
             "TALB": TALB,
+            "TRCK": TRCK,
             "Encoding": Encoding,
             "ID3NoHeaderError": ID3NoHeaderError,
             "MP3": MP3,
@@ -391,7 +395,7 @@ def is_ignored(file_path: Path, ignore_set: set, base_dir: Path = None) -> bool:
 # Directory Cleanup Engine
 # ==============================================================================
 
-def cleanup_directory(target_dir_str: str = None) -> bool:
+def cleanup_directory(target_dir_str: str = None, quiet: bool = False) -> bool:
     """Recursively removes YouTube video IDs and title clutter from media filenames."""
     if not target_dir_str:
         target_dir = Path.home() / "Music"
@@ -399,10 +403,12 @@ def cleanup_directory(target_dir_str: str = None) -> bool:
         target_dir = Path(target_dir_str).expanduser().resolve()
 
     if not target_dir.exists() or not target_dir.is_dir():
-        safe_print(f"{RED}[cleanup] Error: Directory not found: {target_dir}{RESET}", file=sys.stderr)
+        if not quiet:
+            safe_print(f"{RED}[cleanup] Error: Directory not found: {target_dir}{RESET}", file=sys.stderr)
         return False
 
-    safe_print(f"\n{BOLD}{CYAN}🧹 Filename Cleanup Engine: Scanning {target_dir} ...{RESET}\n")
+    if not quiet:
+        safe_print(f"\n{BOLD}{CYAN}🧹 Filename Cleanup Engine: Scanning {target_dir} ...{RESET}\n")
 
     valid_extensions = {".mp3", ".flac", ".m4a", ".ogg", ".wav", ".lrc", ".webp", ".png", ".jpg"}
     all_files = sorted([
@@ -411,7 +417,8 @@ def cleanup_directory(target_dir_str: str = None) -> bool:
     ])
 
     if not all_files:
-        safe_print(f"{YELLOW}[cleanup] No matching media or lyrics files found in: {target_dir}{RESET}\n")
+        if not quiet:
+            safe_print(f"{YELLOW}[cleanup] No matching media or lyrics files found in: {target_dir}{RESET}\n")
         return True
 
     renamed_count = 0
@@ -422,17 +429,21 @@ def cleanup_directory(target_dir_str: str = None) -> bool:
         if cleaned_stem and cleaned_stem != old_stem:
             new_file_path = file_path.with_name(cleaned_stem + file_path.suffix)
             if new_file_path.exists() and new_file_path != file_path:
-                safe_print(f"  {YELLOW}⚠️  Skipped (Target exists): {file_path.name} -> {new_file_path.name}{RESET}")
+                if not quiet:
+                    safe_print(f"  {YELLOW}⚠️  Skipped (Target exists): {file_path.name} -> {new_file_path.name}{RESET}")
                 continue
 
             try:
                 file_path.rename(new_file_path)
                 renamed_count += 1
-                safe_print(f"  {GREEN}✔ Renamed:{RESET} {BOLD}{file_path.name}{RESET}\n    {CYAN}➜ {new_file_path.name}{RESET}")
+                if not quiet:
+                    safe_print(f"  {GREEN}✔ Renamed:{RESET} {BOLD}{file_path.name}{RESET}\n    {CYAN}➜ {new_file_path.name}{RESET}")
             except Exception as e:
-                safe_print(f"  {RED}✖ Error renaming {file_path.name}: {e}{RESET}")
+                if not quiet:
+                    safe_print(f"  {RED}✖ Error renaming {file_path.name}: {e}{RESET}")
 
-    safe_print(f"\n{BOLD}{GREEN}✨ Cleanup Complete! Renamed {renamed_count} file(s) in {target_dir}.{RESET}\n")
+    if not quiet:
+        safe_print(f"\n{BOLD}{GREEN}✨ Cleanup Complete! Renamed {renamed_count} file(s) in {target_dir}.{RESET}\n")
     return True
 
 # Supported Profiles

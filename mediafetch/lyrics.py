@@ -53,6 +53,8 @@ def parse_filename_metadata(filepath: Path) -> tuple[str, str]:
     """Extracts fallback artist and title from filename."""
     stem = filepath.stem
     stem = YOUTUBE_ID_PATTERN.sub('', stem)
+    # Strip leading track number prefixes (e.g. "01 ", "01 - ", "01. ")
+    stem = re.sub(r'^\d+\s*[-.]?\s*', '', stem)
 
     if " - " in stem:
         parts = stem.split(" - ", 1)
