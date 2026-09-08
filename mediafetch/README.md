@@ -1,77 +1,114 @@
-# 📥 Media Fetcher (`mediafetch.py` / `mf`)
+# 📥 MediaFetch (`mediafetch` / `mf`)
 
-A robust, high-performance standalone Python wrapper for `yt-dlp` featuring a full-screen alternate-buffer TUI dashboard inspired by `superfile` and Dusky TUIs, multi-threaded downloads (`aria2c`), clipboard URL auto-pasting, smart destination directory routing (defaults to `~/Videos/Downloads` and `~/Music/Downloads`), preset profiles, multithreaded non-interactive LRCLIB lyrics tagging, and custom configuration support.
+A blazing-fast, zero-overhead terminal media fetcher and `yt-dlp` wrapper built with **Rust** and **Ratatui**.
+
+Features an instant (<3ms) launch, full-screen alternate buffer interactive dashboard, curated smart presets, automated LRCLIB lyrics tagging (`.lrc` sidecars + ID3 `USLT` frames), clipboard auto-detection, and a pixel-perfect nerdy summary card with real-time stats pills upon download completion.
 
 ---
 
 ## 📋 Technical Overview
 
-- **Language**: Python 3 (`#!/usr/bin/env python3`)
-- **Dependencies**: `ffmpeg`, `yt-dlp`, `aria2c` (optional), `rich`, `python-mutagen` (optional)
-- **System Location**: `mediafetch/mediafetch.py`
-- **Target Command / Shorthand**: `mf`
+- **Language**: Rust (Edition 2021)
+- **UI Engine**: [Ratatui](https://github.com/ratatui/ratatui) + [Crossterm](https://github.com/crossterm-rs/crossterm)
+- **Async Runtime**: [Tokio](https://tokio.rs/)
+- **Core CLI Engine**: `yt-dlp` (native subprocess streaming with `--progress-template`)
+- **Metadata & Lyrics**: [LRCLIB REST API](https://lrclib.net/) + [id3](https://crates.io/crates/id3) crate
+- **Startup Latency**: **< 3ms** (native compiled binary, zero interpreter overhead)
 - **Default Destinations**:
-  - 🎵 Music & Audio (`music`, `audio`, `flac`, `podcast`): `~/Music/Downloads`
   - 🎬 Videos (`video`, `shorts`, `archive`): `~/Videos/Downloads`
-- **Configuration File**: `~/.config/mediafetch/config.json`
+  - 🎵 Music & Audio (`music`, `flac`, `podcast`): `~/Music/Downloads`
 
 ---
 
-## 🧱 Modular Architecture
+## 🧱 Architecture
 
-`mediafetch` is split into dedicated subscripts inside `mediafetch/`:
-- **`mediafetch.py`**: Lightweight CLI dispatcher, argument parser, and pipeline orchestrator.
-- **`tui.py`**: Full-screen alternate screen buffer renderer (`Live(screen=True)`), cut-in rounded panels (`box.ROUNDED`), track inspector, full-width block progress gauge, and non-blocking keyboard listener.
-- **`downloader.py`**: Native `yt_dlp` thread pool engine, instant stream resolution, progress hooks with `DownloadCancelled` handlers, and `.part` file cleanup.
-- **`lyrics.py`**: LRCLIB API client, ID3v2 `USLT` & FLAC Vorbis comment embedding, non-interactive batch pipeline, and interactive `fzf` attachment.
-- **`utils.py`**: Title sanitization regex, clipboard reader, `.mfignore` engine, Hyprland window focus, and configuration loader.
+The Rust codebase is structured into clean, modular components inside [`src/`](src/):
+
+| Module | Responsibility |
+| :--- | :--- |
+| [**`src/main.rs`**](src/main.rs) | CLI argument parser, Wayland (`wl-paste`) & X11 clipboard auto-detector, event loop runner, desktop notifications, and pixel-perfect summary table printer. |
+| [**`src/ui.rs`**](src/ui.rs) | Full-screen Ratatui alternate buffer renderer, rounded borders, media header card, presets selector, preset inspector, progress gauge, and URL input modal. |
+| [**`src/presets.rs`**](src/presets.rs) | Definitions for all 6 curated presets, destinations, format flags, and post-processing steps. |
+| [**`src/downloader.rs`**](src/downloader.rs) | Multi-threaded async supervisor driving `yt-dlp`, parsing `--progress-template` for live speed/ETA/percentage, and fallbacks for title extraction. |
+| [**`src/lyrics.rs`**](src/lyrics.rs) | LRCLIB client with exact and fuzzy search, ID3v2 `USLT` frame tagger, and `.lrc` companion sidecar file generator. |
+| [**`src/metadata.rs`**](src/metadata.rs) | Fast async JSON stream inspector querying creator, duration, views, and upload date. |
+
+---
+
+## 🎯 Smart Presets
+
+MediaFetch eliminates guesswork with 6 curated presets designed for immediate, "no-thinking" execution:
+
+| Key | Preset | Format Spec | Destination | Features & Extras |
+| :---: | :--- | :--- | :--- | :--- |
+| `[1]` | **Video** *(Default)* | 1080p H.265 MKV | `~/Videos/Downloads` | Merged English subtitles (`en.*`), embedded high-res thumbnail |
+| `[2]` | **Music (MP3)** | 320k MP3 | `~/Music/Downloads` | Square album art, LRCLIB synced lyrics (`.lrc`) & ID3 `USLT` tags |
+| `[3]` | **FLAC** | Lossless FLAC | `~/Music/Downloads` | Lossless audio extraction, square album art, embedded lyrics & `.lrc` companion |
+| `[4]` | **Shorts** | 9:16 Vertical MP4 | `~/Videos/Downloads` | Optimized for vertical video formats (Shorts, Reels, TikTok) |
+| `[5]` | **Podcast** | Opus Audio | `~/Music/Downloads` | High-efficiency audio-only Opus format with embedded metadata |
+| `[6]` | **Archive** | Max Quality Video | `~/Videos/Downloads` | Maximum quality preservation with all available subtitles |
 
 ---
 
 ## ✨ Features
 
-- **🎨 Full-Screen Alternate-Buffer TUI (`Live(screen=True)`)**: Takes over the terminal in private buffer mode (`\033[?1049h`). Eliminates stdout spam and frame redraw scrolling; cleanly restores the terminal and cursor upon exit or cancellation.
-- **⚡ Full-Width Progress Gauge**: Dedicated full-width rounded gauge panel displaying high-contrast block characters (`████░░`) indicating exact batch and single-stream progress.
-- **🚀 Instant (<0.1s) Download Startup**: Single media URLs bypass blocking metadata pre-extraction and stream straight into the download engine with zero startup lag.
-- **🛑 Graceful Single-Press `Ctrl+C`**: One `Ctrl+C` or pressing `q` triggers a unified cancellation event, raises `yt_dlp.utils.DownloadCancelled`, halts active child processes (`aria2c`, `ffmpeg`), wipes incomplete `.part` files, and restores the terminal without tracebacks.
-- **⚡ 100% Non-Interactive Execution**: Downloads never freeze waiting for user input. If LRCLIB has no online lyrics for a track, it logs `✗ Skipped` and immediately continues.
-- **🐛 Deduplicated Playlists & Albums**: Fast flat playlist extraction prevents duplicate tracks.
-- **⏳ Two-Phase Pipeline**: Downloads all media in parallel first; once all downloads are verified, batch-tags lyrics and writes `.lrc` companion sidecars in phase two.
-- **📋 Smart Clipboard Auto-Paste**: Running `mf music`, `mf audio`, `mf video`, etc. without entering a URL automatically detects media links from your clipboard (`wl-paste`, `xclip`, `pbpaste`).
-- **📁 Default Downloads Folders**: Videos route to `~/Videos/Downloads` and audio/music to `~/Music/Downloads` (customizable via `-o` / `--output-dir` or `config.json`).
-- **Smart Presets & Aliases**:
-  - `video` (Default): 1080p H.265 MKV video, embeds PNG thumbnail, merges English subtitles (`en.*`).
-  - `music` (alias: `audio`): High quality MP3 (320k), 1:1 square-cropped album art metadata, automated LRCLIB lyrics tagging (ID3 `USLT` tags), and `.lrc` companion sidecar file generation.
-  - `flac`: Lossless FLAC audio extraction, square album art, embedded lyrics, and `.lrc` sidecar file generation.
-  - `shorts`: 1080p MP4 optimized for 9:16 vertical video formats (YouTube Shorts, Instagram Reels, TikTok).
-  - `podcast`: Audio-only Opus format, embeds metadata and thumbnail.
-  - `archive`: Maximum quality video/audio preservation with all available subtitles.
-- **🎤 LRCLIB Lyrics Tagging & `kew` Player Integration**:
-  - Embeds unsynchronized lyrics directly into MP3 ID3v2 `USLT` frames and FLAC Vorbis comments for universal player compatibility (VLC, Amberol, Lollypop, etc.).
-  - Generates synchronized `.lrc` sidecar files for terminal players (`kew`, `cmus`).
-- **🎵 Folder & File Lyrics Tagging**: Command `mf lyrics ~/Music` or `mf lyrics track.mp3` to fetch and embed lyrics for local files or whole directories.
-- **📎 Interactive Lyrics Attachment**: Standalone `mf attach` utility launches an interactive 2-step `fzf` picker to attach local `.lrc` files to untagged audio tracks with `.mfignore` support.
-- **🧹 Filename Cleanup Engine**: Command `mf cleanup` or `mf cleanup /path/to/dir` recursively strips YouTube ID tags (e.g. `[kohSdJPaWLA]`) and video clutter (`[Official Lyric Video]`, `[HD]`, `[4K]`) from all audio files and `.lrc` sidecars.
-- **High-Speed Multi-Threaded Engine**: Uses `aria2c` with 8 concurrent connections (`-x 8 -s 8`) for maximum download speeds.
+- **⚡ Instant Launch (<3ms)**: Starts immediately without Python interpreter lag or cold-start freezes.
+- **🎨 Full-Screen Alternate Buffer TUI**: Runs in private terminal buffer mode (`EnterAlternateScreen`), keeping your shell scrollback clean and restoring your prompt cleanly on exit.
+- **📋 Smart Clipboard Auto-Detect**: Running `mediafetch` without arguments automatically inspects your clipboard (`wl-paste` on Wayland or `xclip` on X11) and loads valid media links instantly.
+- **🎤 Automated LRCLIB Lyrics Tagging**:
+  - Automatically fetches synced and unsynced lyrics from LRCLIB.
+  - Embeds unsynced lyrics directly into MP3 ID3v2 `USLT` frames.
+  - Generates synchronized `.lrc` companion files right alongside the audio file for players like `kew`, `cmus`, or `vlc`.
+- **📊 Nerdy Pixel-Perfect Ending Screen**:
+  - Automatically exits the alternate screen buffer when complete and renders an aligned, high-contrast table card in your shell scrollback:
+  ```text
+  ╭── 📥 Download Complete • 1 Video ──────────────────────────────────────────────────────────╮
+  │                                                                                            │
+  │   #     Video Title                                Format         Size          Status     │
+  │  ────────────────────────────────────────────────────────────────────────────────────────  │
+  │   01    what is love?                              1080p H.265    5.6 MB        ✓ Saved    │
+  │                                                                                            │
+  ╰────────────── ⏱ 00:22 │ 📦 5.6 MB │ 🚀 0.3 MB/s │ ✅ 1/1 Saved │ 📁 ~/Videos/Downloads ────╯
+  ```
+- **📐 Mathematical Unicode Alignment**: Uses [`unicode_width`](https://crates.io/crates/unicode-width) to guarantee zero border drift or offset issues regardless of emojis, Japanese/CJK text, or special characters.
 
 ---
 
-## ⌨️ Interactive Controls
+## ⌨️ Keybindings in TUI
 
-During live dashboard execution:
-- `q` / `Q` / `Ctrl+C`: Abort immediately, purge partial `.part` files, and restore the terminal.
-- `c` / `C`: Toggle hide/show of completed items from the active queue table.
+| Key | Action |
+| :--- | :--- |
+| **`Enter`** | Start download with selected preset |
+| **`1` – `6`** | Jump directly to preset by number |
+| **`j` / `k`** or **`↓` / `↑`** | Navigate through presets list |
+| **`u`** | Open URL input / paste modal |
+| **`q`** / **`Esc`** / **`Ctrl+C`** | Abort and cleanly restore terminal |
 
 ---
 
-## 🚀 Setup & Installation
+## 🚀 Installation & Build
 
-Link the script to `/usr/local/bin` using `scrlink` under the shorthand `mf`:
+### 1. Build from Source
+
+Ensure you have Rust and Cargo installed:
 
 ```bash
-sudo ../scrlink/scrlink.sh mediafetch/mediafetch.py mf
-# or using scrlink helper:
-sudo scrlink mediafetch/mediafetch.py mf
+cd mediafetch
+cargo build --release
+```
+
+The optimized binary will be created at `target/release/mediafetch`.
+
+### 2. Install to PATH
+
+Copy or symlink the compiled binary into your local bin directory:
+
+```bash
+cp target/release/mediafetch ~/.local/bin/mediafetch
+chmod +x ~/.local/bin/mediafetch
+
+# Optional shorthand alias:
+ln -sf ~/.local/bin/mediafetch ~/.local/bin/mf
 ```
 
 ---
@@ -79,67 +116,17 @@ sudo scrlink mediafetch/mediafetch.py mf
 ## 📖 Usage Examples
 
 ```bash
-# Clipboard Download (Copy a link, then run without pasting!)
-mf music
-mf audio
+# 1. Clipboard Auto-Detect (Copy a YouTube/media link, then run bare)
+mediafetch
 
-# Direct URL Download (High quality MP3 + album art + lyrics)
-mf audio "https://www.youtube.com/watch?v=..."
-mf music "https://www.youtube.com/watch?v=..."
+# 2. Direct URL Download (Opens TUI with default 1080p Video preset)
+mediafetch "https://www.youtube.com/watch?v=..."
 
-# Download music without fetching or embedding lyrics
-mf music --nolyrics "https://www.youtube.com/watch?v=..."
+# 3. Pre-select a Preset (Opens TUI with preset focused)
+mediafetch music "https://www.youtube.com/watch?v=..."
+mediafetch flac "https://www.youtube.com/watch?v=..."
+mediafetch shorts "https://www.youtube.com/watch?v=..."
 
-# Download Lossless FLAC + lyrics
-mf flac "https://www.youtube.com/watch?v=..."
-
-# Download 1080p MKV Video with English subtitles
-mf video "https://www.youtube.com/watch?v=..."
-
-# Download 1080p Vertical Video (YouTube Shorts / Reels)
-mf shorts "https://www.youtube.com/watch?v=..."
-
-# Download Podcast (Opus audio)
-mf podcast "https://www.youtube.com/watch?v=..."
-
-# Interactively attach local .lrc lyrics to untagged songs
-mf attach
-mf attach ~/Music
-
-# Clean YouTube IDs & clutter from filenames & .lrc sidecars
-mf cleanup
-mf cleanup ~/Music/Downloads
-
-# Launch Interactive TUI Menu
-mf -i
-
-# Embed lyrics into existing local audio file or entire folder recursively
-# Automatically skips tracks with existing .lrc sidecars or embedded metadata (use -f / --force to overwrite)
-mf lyrics
-mf lyrics /path/to/song.mp3
-mf lyrics ~/Music
-mf lyrics -f ~/Music
-
-# Download age-restricted videos using cookies
-mf video -c ~/.config/mediafetch/cookies.txt "https://www.youtube.com/watch?v=..."
-# (Or place cookies.txt in ~/.config/mediafetch/cookies.txt for automatic on-demand retry)
-
-# Inspect available stream formats only
-mf --list "https://www.youtube.com/watch?v=..."
+# 4. View Help & Presets List
+mediafetch --help
 ```
-
----
-
-## 🍪 Cookies & Age-Restricted Content
-
-YouTube requires sign-in authentication to access age-restricted videos. `mediafetch` includes a zero-risk **Smart Cookie Fallback**:
-- Normal downloads run anonymously without cookies to protect your Google account from session rotation or bot-flagging.
-- If an age-restricted video is encountered, `mediafetch` automatically retries using your `cookies.txt` and displays `Retrying (Cookies)`.
-- If cookies are expired or missing, `mediafetch` reports `Age-Restricted` or `Expired Cookies` with guidance on updating your cookies.
-
-### Providing Cookies
-You can provide a Netscape-formatted `cookies.txt` via:
-1. **Standard location**: Save to `~/.config/mediafetch/cookies.txt` (or in the `mediafetch/` folder).
-2. **CLI flag**: `mf -c /path/to/cookies.txt <URL>` or `mf --cookies /path/to/cookies.txt <URL>`.
-3. **Configuration**: Set `"cookie_file": "/path/to/cookies.txt"` and optionally `"cookies_mode": "always"` in `~/.config/mediafetch/config.json`.
-

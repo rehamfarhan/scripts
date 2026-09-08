@@ -11,7 +11,8 @@ Each utility is organized into its own standalone directory containing the execu
 | Script / Folder | Command | Language | Description |
 | :--- | :--- | :--- | :--- |
 | [**`money/`**](money/) | `money` | Python 3 | Git-inspired terminal financial ledger with quick entry syntax, reservation system, and ASCII logging. |
-| [**`mediafetch/`**](mediafetch/) | `mf` | Python 3 | High-speed profile-based downloader (`yt-dlp`), clipboard auto-paster, smart folder router (`~/Music`, `~/Videos`), and universal LRCLIB lyrics tagger. |
+| [**`mediafetch/`**](mediafetch/) | `mediafetch` / `mf` | Rust | Blazing-fast (<3ms) Ratatui TUI wrapper for `yt-dlp` with smart presets, LRCLIB lyrics tagging, and pixel-perfect stats cards. |
+| [**`deprecated-mediafetch/`**](deprecated-mediafetch/) | — | Python 3 | Legacy Python implementation of mediafetch (deprecated; superseded by Rust Ratatui version). |
 | [**`run/`**](run/) | `run` | Python 3 | Interactive `fzf` game launcher & wizard with Wine prefix management, registry tracking, and quick-launch mode. |
 | [**`ddlclauncher/`**](ddlclauncher/) | `ddlclauncher` | Bash | Interactive DDLC mod manager featuring thematic `fzf` UI, automatic scanner, launcher creator, and executable detection. |
 | [**`morsegen/`**](morsegen/) | `morsegen` | Python 3 | Bi-directional Morse code encoder and decoder with custom symbol support and distinct character validation. |
@@ -63,5 +64,6 @@ To maintain clean and uncluttered documentation:
 ## ⚙️ Requirements & Dependencies
 
 - **Shell**: Bash 4+
+- **Rust**: Rust 1.75+ & Cargo (for `mediafetch`)
 - **Python**: Python 3.8+
 - **Core CLI Utilities**: `fzf`, `yt-dlp`, `aria2c`, `ffmpeg`, `waybar` (optional, for `barr`), `wine` (optional, for Windows DDLC mods).
