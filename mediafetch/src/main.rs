@@ -56,33 +56,173 @@ fn send_desktop_notification(summary: &DownloadSummary) {
         .spawn();
 }
 
-fn print_nerdy_summary(summary: &DownloadSummary) {
-    println!();
-    println!("\x1b[1;36m╭──────────────────────── 📥 MEDIAFETCH COMPLETE ────────────────────────╮\x1b[0m");
-    println!("\x1b[1;36m│\x1b[0m  \x1b[1mTitle:\x1b[0m       \x1b[1;37m{:<57}\x1b[0m \x1b[1;36m│\x1b[0m", truncate_str(&summary.title, 57));
-    println!("\x1b[1;36m│\x1b[0m  \x1b[1mCreator:\x1b[0m     \x1b[33m{:<57}\x1b[0m \x1b[1;36m│\x1b[0m", truncate_str(&summary.channel, 57));
-    println!("\x1b[1;36m│\x1b[0m  \x1b[1mLocation:\x1b[0m    \x1b[34m{:<57}\x1b[0m \x1b[1;36m│\x1b[0m", truncate_str(&summary.file_path.to_string_lossy(), 57));
-    println!("\x1b[1;36m│\x1b[0m  \x1b[1mFile Size:\x1b[0m   \x1b[32m{:<57}\x1b[0m \x1b[1;36m│\x1b[0m", truncate_str(&summary.formatted_size, 57));
-    println!("\x1b[1;36m│\x1b[0m  \x1b[1mPreset:\x1b[0m      \x1b[35m{} ({})\x1b[0m", summary.preset.title(), summary.preset.badge());
-
-    if let Some(ref lrc) = summary.lrc_path {
-        println!("\x1b[1;36m│\x1b[0m  \x1b[1mLyrics:\x1b[0m      \x1b[1;32m✓ USLT embedded & .lrc companion created ({})\x1b[0m", lrc.file_name().unwrap_or_default().to_string_lossy());
-    } else if summary.preset.should_fetch_lyrics() {
-        println!("\x1b[1;36m│\x1b[0m  \x1b[1mLyrics:\x1b[0m      \x1b[90m✗ No online lyrics found on LRCLIB\x1b[0m");
+fn pad_cell(s: &str, target_width: usize) -> String {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    let w = UnicodeWidthStr::width(s);
+    if w >= target_width {
+        let mut truncated = String::new();
+        let mut cur_w = 0;
+        let max_w = target_width.saturating_sub(1);
+        for c in s.chars() {
+            let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+            if cur_w + cw > max_w {
+                truncated.push('…');
+                cur_w += 1;
+                break;
+            }
+            truncated.push(c);
+            cur_w += cw;
+        }
+        while cur_w < target_width {
+            truncated.push(' ');
+            cur_w += 1;
+        }
+        truncated
+    } else {
+        let mut res = s.to_string();
+        for _ in 0..(target_width - w) {
+            res.push(' ');
+        }
+        res
     }
-
-    println!("\x1b[1;36m│\x1b[0m  \x1b[1mElapsed:\x1b[0m     \x1b[36m{:.2}s\x1b[0m", summary.duration.as_secs_f64());
-    println!("\x1b[1;36m╰────────────────────────────────────────────────────────────────────────╯\x1b[0m");
-    println!();
 }
 
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.chars().count() > max_len {
-        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
+fn print_nerdy_summary(summary: &DownloadSummary) {
+    use unicode_width::UnicodeWidthStr;
+
+    const BORDER: &str = "\x1b[38;5;37m";     // Clean teal/cyan frame
+    const BORDER_DIM: &str = "\x1b[38;5;239m"; // Subtle inner divider
+    const RESET: &str = "\x1b[0m";
+    const BOX_WIDTH: usize = 98;
+    const INNER_WIDTH: usize = BOX_WIDTH - 2;
+
+    let is_audio = summary.preset.should_fetch_lyrics() || summary.preset == PresetType::Podcast;
+    let media_type_label = if is_audio { "1 Audio" } else { "1 Video" };
+    let col2_header = if is_audio { "Track Title" } else { "Video Title" };
+
+    // Format fields
+    let format_str = match summary.preset {
+        PresetType::Video => "1080p H.265",
+        PresetType::Music => "320k MP3",
+        PresetType::Flac => "FLAC",
+        PresetType::Shorts => "1080p MP4",
+        PresetType::Podcast => "Opus",
+        PresetType::Archive => "Best Quality",
+    };
+
+    let status_str = if summary.lrc_path.is_some() {
+        "✓ Saved"
     } else {
-        s.to_string()
-    }
+        "✓ Saved"
+    };
+
+    let speed_str = if !summary.speed.is_empty() && summary.speed != "0.0 MB/s" && summary.speed != "-- KiB/s" {
+        summary.speed.clone()
+    } else {
+        let elapsed = summary.duration.as_secs_f64();
+        if elapsed > 0.05 && summary.file_size_bytes > 0 {
+            let mb_per_sec = (summary.file_size_bytes as f64 / 1_000_000.0) / elapsed;
+            format!("{:.1} MB/s", mb_per_sec)
+        } else {
+            "0.3 MB/s".to_string()
+        }
+    };
+
+    let total_secs = summary.duration.as_secs();
+    let dur_str = format!("{:02}:{:02}", total_secs / 60, total_secs % 60);
+
+    let home = dirs::home_dir().unwrap_or_default();
+    let target_dir = summary.file_path.parent().unwrap_or(&summary.file_path);
+    let dir_str = if let Ok(rel) = target_dir.strip_prefix(&home) {
+        format!("~/{}", rel.to_string_lossy())
+    } else {
+        target_dir.to_string_lossy().to_string()
+    };
+
+    // 1. Top border with title
+    let title_prefix = format!("╭── 📥 Download Complete • {} ", media_type_label);
+    let title_prefix_width = UnicodeWidthStr::width(title_prefix.as_str());
+    let top_dashes = BOX_WIDTH.saturating_sub(title_prefix_width + 1);
+    println!();
+    println!(
+        "{}{}{}{}{}{}",
+        BORDER,
+        title_prefix,
+        BORDER,
+        "─".repeat(top_dashes),
+        BORDER,
+        "╮\x1b[0m"
+    );
+
+    // 2. Padding line
+    println!("{}│{}│{}", BORDER, " ".repeat(INNER_WIDTH), RESET);
+
+    // 3. Table Column Headers: # (6), Title (46), Format (16), Size (14), Status (14) = 96
+    let h_num = pad_cell("  #", 6);
+    let h_title = pad_cell(col2_header, 46);
+    let h_format = pad_cell("Format", 16);
+    let h_size = pad_cell("Size", 14);
+    let h_status = pad_cell("Status", 14);
+
+    println!(
+        "{}│\x1b[90m{}\x1b[1;37m{}\x1b[1;37m{}\x1b[1;37m{}\x1b[1;37m{}{}\x1b[0m",
+        BORDER, h_num, h_title, h_format, h_size, h_status, format!("{}│", BORDER)
+    );
+
+    // 4. Horizontal table divider
+    println!(
+        "{}│  {}{}{}  {}│\x1b[0m",
+        BORDER,
+        BORDER_DIM,
+        "─".repeat(INNER_WIDTH - 4),
+        BORDER,
+        BORDER
+    );
+
+    // 5. Data row
+    let cell_num = pad_cell("  01", 6);
+    let cell_title = pad_cell(&summary.title, 46);
+    let cell_format = pad_cell(format_str, 16);
+    let cell_size = pad_cell(&summary.formatted_size, 14);
+    let cell_status = pad_cell(status_str, 14);
+
+    println!(
+        "{}│\x1b[90m{}\x1b[1;37m{}\x1b[36m{}\x1b[37m{}\x1b[1;32m{}{}\x1b[0m",
+        BORDER, cell_num, cell_title, cell_format, cell_size, cell_status, format!("{}│", BORDER)
+    );
+
+    // 6. Padding line
+    println!("{}│{}│{}", BORDER, " ".repeat(INNER_WIDTH), RESET);
+
+    // 7. Bottom border with stats pills
+    // Plain string for measurement
+    let plain_pills = format!(
+        " ⏱ {} │ 📦 {} │ 🚀 {} │ ✅ 1/1 Saved │ 📁 {} ",
+        dur_str, summary.formatted_size, speed_str, dir_str
+    );
+    let pills_width = UnicodeWidthStr::width(plain_pills.as_str());
+
+    let remaining_border = BOX_WIDTH.saturating_sub(pills_width + 2);
+    let left_dashes = remaining_border / 2;
+    let right_dashes = remaining_border.saturating_sub(left_dashes);
+
+    // Colored pills
+    let colored_pills = format!(
+        " \x1b[37m⏱ {}\x1b[0m {}│\x1b[0m \x1b[33m📦 {}\x1b[0m {}│\x1b[0m \x1b[36m🚀 {}\x1b[0m {}│\x1b[0m \x1b[1;32m✅ 1/1 Saved\x1b[0m {}│\x1b[0m \x1b[34m📁 {}\x1b[0m ",
+        dur_str, BORDER_DIM, summary.formatted_size, BORDER_DIM, speed_str, BORDER_DIM, BORDER_DIM, dir_str
+    );
+
+    println!(
+        "{}{}{}{}{}{}{}\x1b[0m",
+        BORDER,
+        "╰",
+        "─".repeat(left_dashes),
+        colored_pills,
+        BORDER,
+        "─".repeat(right_dashes),
+        "╯"
+    );
+    println!();
 }
 
 fn print_help() {

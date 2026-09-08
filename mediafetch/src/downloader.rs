@@ -34,6 +34,7 @@ pub struct DownloadSummary {
     pub file_size_bytes: u64,
     pub formatted_size: String,
     pub duration: Duration,
+    pub speed: String,
     pub preset: PresetType,
     pub lrc_path: Option<PathBuf>,
     pub lyrics_found: bool,
@@ -65,6 +66,10 @@ impl Downloader {
             "--progress-template",
             "download:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._total_bytes_str)s",
             "--print",
+            "before_dl:title:%(title)s",
+            "--print",
+            "before_dl:uploader:%(uploader)s",
+            "--print",
             "after_move:filepath",
             "--paths",
             target_dir.to_str().unwrap(),
@@ -86,6 +91,9 @@ impl Downloader {
 
         let mut reader = BufReader::new(stdout).lines();
         let mut final_file_path: Option<PathBuf> = None;
+        let mut resolved_title = String::new();
+        let mut resolved_uploader = String::new();
+        let mut last_speed = String::from("0.0 MB/s");
 
         // Track stderr in background for error diagnostics
         let stderr_task = tokio::spawn(async move {
@@ -101,7 +109,11 @@ impl Downloader {
 
         while let Ok(Some(line)) = reader.next_line().await {
             let line = line.trim();
-            if line.starts_with("download:") {
+            if let Some(t) = line.strip_prefix("title:") {
+                resolved_title = t.trim().to_string();
+            } else if let Some(u) = line.strip_prefix("uploader:") {
+                resolved_uploader = u.trim().to_string();
+            } else if line.starts_with("download:") {
                 let parts: Vec<&str> = line[9..].split('|').collect();
                 if parts.len() >= 4 {
                     let percent_raw = parts[0].replace('%', "").trim().to_string();
@@ -109,6 +121,10 @@ impl Downloader {
                     let speed = parts[1].trim().to_string();
                     let eta = parts[2].trim().to_string();
                     let size = parts[3].trim().to_string();
+
+                    if !speed.is_empty() && speed != "-- KiB/s" {
+                        last_speed = speed.clone();
+                    }
 
                     let _ = tx.send(DownloadProgress::Downloading {
                         percent,
@@ -173,17 +189,34 @@ impl Downloader {
             }
         }
 
+        let final_title = if !resolved_title.is_empty() {
+            resolved_title
+        } else if !metadata.display_title().is_empty() && metadata.display_title() != "Unknown Title" {
+            metadata.display_title().to_string()
+        } else {
+            resolved_file.file_stem().unwrap_or_default().to_string_lossy().to_string()
+        };
+
+        let final_channel = if !resolved_uploader.is_empty() {
+            resolved_uploader
+        } else if !metadata.display_uploader().is_empty() && metadata.display_uploader() != "Unknown Creator" {
+            metadata.display_uploader().to_string()
+        } else {
+            "Unknown Creator".to_string()
+        };
+
         let summary = DownloadSummary {
             file_name: resolved_file.file_name().unwrap_or_default().to_string_lossy().to_string(),
             file_path: resolved_file,
             file_size_bytes,
             formatted_size,
             duration: start_time.elapsed(),
+            speed: last_speed,
             preset,
             lrc_path,
             lyrics_found,
-            title: metadata.display_title().to_string(),
-            channel: metadata.display_uploader().to_string(),
+            title: final_title,
+            channel: final_channel,
         };
 
         let _ = tx.send(DownloadProgress::Complete(summary));
@@ -213,17 +246,17 @@ impl Downloader {
     }
 
     pub fn format_bytes(bytes: u64) -> String {
-        const KIB: f64 = 1024.0;
-        const MIB: f64 = 1024.0 * KIB;
-        const GIB: f64 = 1024.0 * MIB;
+        const KB: f64 = 1000.0;
+        const MB: f64 = 1000.0 * KB;
+        const GB: f64 = 1000.0 * MB;
 
         let b = bytes as f64;
-        if b >= GIB {
-            format!("{:.2} GiB", b / GIB)
-        } else if b >= MIB {
-            format!("{:.1} MiB", b / MIB)
-        } else if b >= KIB {
-            format!("{:.0} KiB", b / KIB)
+        if b >= GB {
+            format!("{:.1} GB", b / GB)
+        } else if b >= MB {
+            format!("{:.1} MB", b / MB)
+        } else if b >= KB {
+            format!("{:.0} KB", b / KB)
         } else {
             format!("{} B", bytes)
         }
