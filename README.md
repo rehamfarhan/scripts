@@ -22,6 +22,8 @@ Each utility is organized into its own standalone directory containing the execu
 | [**`barr/`**](barr/) | `barr` | Bash | Safe restarter script for Waybar to cleanly reload status bar configurations without disrupting desktop sessions. |
 | [**`keydmgr/`**](keydmgr/) | `keydmgr` | Python 3 | Intelligent terminal manager & interactive configurator for `keyd` with AST parsing, pre-flight validation, and safe sudo staging. |
 | [**`scrlink/`**](scrlink/) | `scrlink` | Bash | Intelligent helper tool to symlink scripts to `/usr/local/bin`, featuring `fzf` selection and automatic folder migration. |
+| [**`modfetch/`**](modfetch/) | `modfetch` | Python 3 | Paru-style Modrinth installer for Minecraft mods, modpacks, resource packs, and shader packs with dependency resolution. |
+| [**`raminfo/`**](raminfo/) | `raminfo` | Bash | Well-formatted display of RAM and swap usage with visual progress bars, showing total, used, available, and detailed breakdown. |
 
 ---
 
