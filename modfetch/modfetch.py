@@ -41,6 +41,7 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 DEFAULT_MC_DIR = Path.home() / ".minecraft"
 DEFAULT_MODS_DIR = DEFAULT_MC_DIR / "mods"
 DEFAULT_RESOURCEPACKS_DIR = DEFAULT_MC_DIR / "resourcepacks"
+DEFAULT_SHADERPACKS_DIR = DEFAULT_MC_DIR / "shaderpacks"
 DEFAULT_CONFIG_DIR = DEFAULT_MC_DIR / "config"
 DEFAULT_LOADER = "fabric"
 SUPPORTED_LOADERS = ("fabric", "forge", "neoforge", "quilt")
@@ -51,7 +52,7 @@ LOADER_KEYS = ("fabric-loader", "quilt-loader", "forge", "neoforge")
 # Options that consume a following value token (used by normalize_argv).
 VALUE_OPTS = {"-g", "-r", "-l", "-d", "--game-version", "--mc-version",
               "--minecraft-version", "--loader", "--directory",
-              "--confdir", "--mod-version"}
+              "--confdir", "--shaderpacks-dir", "--mod-version"}
 VALUED_SHORTS = frozenset("dglr")
 
 # Operations (paru-style).
@@ -64,6 +65,7 @@ LEGACY_SUBCOMMANDS = {
     "install":      (OP_SYNC,   "install",    None),
     "pack":         (OP_SYNC,   "install",    "modpack"),
     "resourcepack": (OP_SYNC,   "install",    "resourcepack"),
+    "shaderpack":   (OP_SYNC,   "install",    "shaderpack"),
     "url":          (OP_SYNC,   "install",    "url"),
     "list":         (OP_QUERY,  "list",       None),
     "delete":       (OP_REMOVE, "remove",     None),
@@ -147,6 +149,7 @@ def default_config():
     return {
         "mods_dir": str(DEFAULT_MODS_DIR),
         "resourcepacks_dir": str(DEFAULT_RESOURCEPACKS_DIR),
+        "shaderpacks_dir": str(DEFAULT_SHADERPACKS_DIR),
         "config_dir": str(DEFAULT_CONFIG_DIR),
         "loader": DEFAULT_LOADER,
         "minecraft_version": "latest",
@@ -201,6 +204,7 @@ def write_config(config):
             "# CLI arguments override these values for a single invocation.\n\n"
             f"mods_dir = {json.dumps(config['mods_dir'])}\n"
             f"resourcepacks_dir = {json.dumps(config['resourcepacks_dir'])}\n"
+            f"shaderpacks_dir = {json.dumps(config['shaderpacks_dir'])}\n"
             f"config_dir = {json.dumps(config['config_dir'])}\n"
             f"loader = {json.dumps(config['loader'])}\n"
             f"minecraft_version = {json.dumps(config['minecraft_version'])}\n",
@@ -221,6 +225,9 @@ def effective_config(args):
         directory = str(args.directory)
         config["mods_dir"] = directory
         config["resourcepacks_dir"] = directory
+        config["shaderpacks_dir"] = directory
+    if hasattr(args, "shaderpacks_dir"):
+        config["shaderpacks_dir"] = str(args.shaderpacks_dir)
     if args.config_dir is not None:
         config["config_dir"] = str(args.config_dir)
     if hasattr(args, "loader"):
@@ -235,6 +242,7 @@ def print_config(config, color):
     info(f"Configuration: {CONFIG_FILE}", color)
     print(f"  mods_dir           = {config['mods_dir']}")
     print(f"  resourcepacks_dir  = {config['resourcepacks_dir']}")
+    print(f"  shaderpacks_dir    = {config['shaderpacks_dir']}")
     print(f"  config_dir         = {config['config_dir']}")
     print(f"  loader             = {config['loader']}")
     print(f"  minecraft_version  = {config['minecraft_version']}")
@@ -403,11 +411,14 @@ def search_project(query, color, prompt_ok, quiet=False):
 def resolve_kind(project, type_pref):
     """Decide how to install a resolved project.
 
-    type_pref is set by the legacy subcommands (pack/resourcepack/url);
+    type_pref is set by the legacy subcommands (pack/resourcepack/shaderpack/url);
     otherwise the project's own type decides.
     """
     if type_pref == "url" or type_pref is None:
-        return project.get("project_type", "mod")
+        raw = project.get("project_type", "mod")
+        if raw == "shader":
+            return "shaderpack"
+        return raw
     return type_pref
 
 
@@ -585,6 +596,36 @@ def install_resourcepack(project, version, directory, force, color, quiet=False)
     ok(f"Installed {project.get('title', project['id'])} {version['version_number']} → {dest}", color, quiet)
 
 
+def resolve_shaderpack(project, mc=None, mod_version=None, color=False, quiet=False):
+    params = {"include_changelog": False}
+    if mc:
+        params["game_versions"] = [mc]
+    versions = api(f"/project/{quote(project['id'], safe='')}/version", params=params)
+    version = select_version(versions, mc=mc, loader=None, mod_version=mod_version)
+    if not version:
+        target = mc or "any supported Minecraft version"
+        extra = f" and version {mod_version!r}" if mod_version else ""
+        raise ModfetchError(f"No shader pack version of {project.get('title', project['id'])} matches {target}{extra}.")
+    info(f"Resolved shader pack {project.get('title', project['id'])} → {version['version_number']}"
+         f"{version_channel_text(version)} / Minecraft {', '.join(version.get('game_versions', [])[:4])}",
+         color, quiet)
+    return version
+
+
+def install_shaderpack(project, version, directory, force, color, quiet=False):
+    file = primary(version)
+    dest = directory / file["filename"]
+    expected = (file.get("hashes") or {}).get("sha1")
+    if dest.is_file() and not force:
+        if not expected or sha1(dest).lower() == expected.lower():
+            ok(f"Already present: {dest.name}", color, quiet)
+            return
+    directory.mkdir(parents=True, exist_ok=True)
+    info(f"Downloading shader pack {file['filename']} ({human(int(file.get('size', 0)))})…", color, quiet)
+    download(file["url"], dest, expected)
+    ok(f"Installed {project.get('title', project['id'])} {version['version_number']} → {dest}", color, quiet)
+
+
 # ---------------------------------------------------------------------------
 # Modpack installation
 # ---------------------------------------------------------------------------
@@ -629,7 +670,7 @@ def download_pack_file(urls, dest, sha1_expected, sha512_expected):
     raise ModfetchError(f"Could not download {dest.name}: {last_error or 'no HTTPS download URL available'}")
 
 
-def install_pack(project, version, mods_dir, resourcepacks_dir, config_dir,
+def install_pack(project, version, mods_dir, resourcepacks_dir, shaderpacks_dir, config_dir,
                   force, color, quiet, noconfirm):
     pack = primary(version)
     if not pack.get("url"):
@@ -667,6 +708,7 @@ def install_pack(project, version, mods_dir, resourcepacks_dir, config_dir,
                 info("  requisites: " + ", ".join(summary), color, quiet)
                 info(f"  mods → {mods_dir}", color, quiet)
                 info(f"  resourcepacks → {resourcepacks_dir}", color, quiet)
+                info(f"  shaderpacks → {shaderpacks_dir}", color, quiet)
                 info(f"  configs → {config_dir}", color, quiet)
 
                 files = manifest.get("files") or []
@@ -702,6 +744,10 @@ def install_pack(project, version, mods_dir, resourcepacks_dir, config_dir,
                         dest = (resourcepacks_dir / path[len("resourcepacks/"):]).resolve()
                         root = resourcepacks_dir.resolve()
                         label = Path(path[len("resourcepacks/"):])
+                    elif path.startswith("shaderpacks/"):
+                        dest = (shaderpacks_dir / path[len("shaderpacks/"):]).resolve()
+                        root = shaderpacks_dir.resolve()
+                        label = Path(path[len("shaderpacks/"):])
                     elif path.startswith("config/"):
                         dest = (config_dir / path[len("config/"):]).resolve()
                         root = config_dir.resolve()
@@ -805,10 +851,13 @@ def cmd_install(a, targets, type_pref, color):
             if kind == "modpack":
                 version = resolve_pack(project, a.mc_version, color, a.quiet)
                 install_pack(project, version, a.mods_dir, a.resourcepacks_dir,
-                             a.config_dir, a.force, color, a.quiet, a.noconfirm)
+                             a.shaderpacks_dir, a.config_dir, a.force, color, a.quiet, a.noconfirm)
             elif kind == "resourcepack":
                 version = resolve_resourcepack(project, a.mc_version, a.mod_version, color, a.quiet)
                 install_resourcepack(project, version, a.resourcepacks_dir, a.force, color, a.quiet)
+            elif kind == "shaderpack":
+                version = resolve_shaderpack(project, a.mc_version, a.mod_version, color, a.quiet)
+                install_shaderpack(project, version, a.shaderpacks_dir, a.force, color, a.quiet)
             else:
                 version = resolve(project, a.mc_version, a.mod_version, color, a.loader, a.quiet)
                 install_version(project, version, a.mods_dir, a.force, a.noconfirm,
@@ -1185,6 +1234,7 @@ def cmd_config(a, targets, color):
         config = {
             "mods_dir": str(instance_path / "mods"),
             "resourcepacks_dir": str(instance_path / "resourcepacks"),
+            "shaderpacks_dir": str(instance_path / "shaderpacks"),
             "config_dir": str(instance_path / "config"),
             "loader": load_config().get("loader", "fabric"),
             "minecraft_version": mc_version or load_config().get("minecraft_version", "latest"),
@@ -1250,6 +1300,7 @@ examples:
   modfetch -R sodium               remove a mod
   modfetch pack mypack             force modpack installation
   modfetch resourcepack sodium     force resource pack installation
+  modfetch shaderpack BSL Shaders  force shader pack installation
   modfetch config show             show the configuration
   modfetch config edit             edit the configuration file
   modfetch config <instance>       configure for a Minecraft instance
@@ -1293,6 +1344,8 @@ examples:
                    help="install directory for mods and resource packs")
     p.add_argument("--confdir", dest="config_dir", default=None, action="store",
                    help="directory for mod config files (from modpacks)")
+    p.add_argument("--shaderpacks-dir", dest="shaderpacks_dir", default=argparse.SUPPRESS,
+                   action="store", help="directory for shader packs")
     p.add_argument("--mod-version", dest="mod_version", default=None,
                    help="exact Modrinth version number to install")
     p.add_argument("--no-color", dest="no_color", action="store_true", help="disable ANSI colors")
@@ -1425,6 +1478,7 @@ def main(argv=None):
         config = effective_config(a)
         a.mods_dir = expand_path(config["mods_dir"])
         a.resourcepacks_dir = expand_path(config["resourcepacks_dir"])
+        a.shaderpacks_dir = expand_path(config["shaderpacks_dir"])
         a.config_dir = expand_path(config["config_dir"])
         a.loader = config["loader"]
         a.mc_version = None if config["minecraft_version"].lower() == "latest" else config["minecraft_version"]

@@ -1,6 +1,6 @@
 # modfetch
 
-A paru-style Modrinth installer for Minecraft mods, modpacks, and resource packs.
+A paru-style Modrinth installer for Minecraft mods, modpacks, resource packs, and shader packs.
 
 ## Configuration
 
@@ -9,6 +9,7 @@ Config file: `~/.config/modfetch/config.toml`
 ```toml
 mods_dir = "~/.minecraft/versions/<instance>/mods/"
 resourcepacks_dir = "~/.minecraft/versions/<instance>/resourcepacks/"
+shaderpacks_dir = "~/.minecraft/versions/<instance>/shaderpacks/"
 config_dir = "~/.minecraft/versions/<instance>/config/"
 loader = "fabric"
 minecraft_version = "26.1.2"
@@ -18,6 +19,7 @@ minecraft_version = "26.1.2"
 |-----|-------------|
 | `mods_dir` | Where mod JARs are installed |
 | `resourcepacks_dir` | Where resource packs are installed |
+| `shaderpacks_dir` | Where shader packs are installed |
 | `config_dir` | Where modpack config files are installed |
 | `loader` | `fabric`, `forge`, `neoforge`, or `quilt` |
 | `minecraft_version` | Target MC version, or `latest` for newest release |
@@ -44,6 +46,7 @@ CLI arguments (`-d`, `-l`, `-g`) override config values for a single invocation.
 | `-l <loader>` | Target mod loader (e.g. `-l fabric`) |
 | `-d <dir>` | Install directory for mods and resource packs |
 | `--confdir <dir>` | Directory for modpack config files |
+| `--shaderpacks-dir <dir>` | Directory for shader packs |
 | `--force` | Re-download and replace existing files |
 | `--noconfirm` | Skip all confirmation prompts |
 | `-q` | Suppress informational output |
@@ -101,6 +104,7 @@ These still work as aliases:
 modfetch install sodium          # same as -S sodium
 modfetch pack mypack             # force modpack installation
 modfetch resourcepack sodium     # force resource pack installation
+modfetch shaderpack BSL Shaders  # force shader pack installation
 modfetch update                  # same as -Syu
 modfetch search foo              # same as -Ss foo
 modfetch info sodium             # same as -Si sodium
@@ -116,7 +120,8 @@ When installing a modpack (`-S <modpack>`), modfetch:
 
 1. **Downloads mods** → `mods_dir`
 2. **Downloads resource packs** → `resourcepacks_dir`
-3. **Applies config overrides** → `config_dir` (always overwritten with pack author's settings)
+3. **Downloads shader packs** → `shaderpacks_dir`
+4. **Applies config overrides** → `config_dir` (always overwritten with pack author's settings)
 
 Files under `overrides/config/modpack_defaults/` are flattened to the root of `config_dir`, so mods find them where they expect.
 
