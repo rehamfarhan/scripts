@@ -1,4 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -53,12 +55,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('r') => {
             if let Some(game) = app.selected_game() {
-                let current_rating = app
-                    .stats
-                    .stats
-                    .get(&game.dir)
-                    .map(|s| s.rating)
-                    .unwrap_or(0);
+                let current_rating = app.stats.get_stat(&game.dir).map(|s| s.rating).unwrap_or(0);
 
                 let opt_idx = if current_rating == 0 {
                     5
@@ -167,9 +164,12 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 let folder_path = app.games_root.join(&game.dir);
                 let binaries = scan_executables(&folder_path, 2);
                 if !binaries.is_empty() {
+                    let filtered_indices: Vec<usize> = (0..binaries.len()).collect();
                     app.active_modal = ActiveModal::ChangeBinary {
                         binaries,
+                        filtered_indices,
                         selected_bin: 0,
+                        search_query: String::new(),
                     };
                 } else {
                     app.set_toast("✗ No executables found in folder");
@@ -193,6 +193,22 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+}
+
+fn filter_binary_indices(binaries: &[PathBuf], game_dir: &Path, query: &str) -> Vec<usize> {
+    if query.trim().is_empty() {
+        return (0..binaries.len()).collect();
+    }
+    let matcher = SkimMatcherV2::default();
+    let mut scored = Vec::new();
+    for (idx, bin) in binaries.iter().enumerate() {
+        let rel = bin.strip_prefix(game_dir).unwrap_or(bin).to_string_lossy();
+        if let Some(score) = matcher.fuzzy_match(&rel, query) {
+            scored.push((idx, score));
+        }
+    }
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.into_iter().map(|(idx, _)| idx).collect()
 }
 
 fn handle_modal_key(app: &mut App, key: KeyEvent) {
@@ -224,7 +240,7 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                 if let Some(game) = app.selected_game() {
                     let dir_key = game.dir.clone();
                     let g_name = game.display_name.clone();
-                    let entry = app.stats.stats.entry(dir_key).or_default();
+                    let entry = app.stats.get_stat_mut(&dir_key);
                     entry.rating = chosen_rating;
                     let _ = app.stats.save(&app.games_root);
                     let stars = if chosen_rating > 0 {
@@ -430,66 +446,105 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
         },
         ActiveModal::ChangeBinary {
             binaries,
+            mut filtered_indices,
             mut selected_bin,
-        } => match key.code {
-            KeyCode::Esc => ActiveModal::None,
-            KeyCode::Up => {
-                if selected_bin > 0 {
-                    selected_bin -= 1;
-                } else if !binaries.is_empty() {
-                    selected_bin = binaries.len() - 1;
-                }
-                ActiveModal::ChangeBinary {
-                    binaries,
-                    selected_bin,
-                }
-            }
-            KeyCode::Down => {
-                if !binaries.is_empty() {
-                    selected_bin = (selected_bin + 1) % binaries.len();
-                }
-                ActiveModal::ChangeBinary {
-                    binaries,
-                    selected_bin,
-                }
-            }
-            KeyCode::Enter => {
-                if let Some(chosen) = binaries.get(selected_bin).cloned() {
-                    if let Some(game) = app.selected_game().cloned() {
-                        let folder = app.games_root.join(&game.dir);
-                        let rel = chosen.strip_prefix(&folder).unwrap_or(&chosen);
-                        let is_windows = rel
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("bat"))
-                            .unwrap_or(false);
+            mut search_query,
+        } => {
+            let game_dir = app
+                .selected_game()
+                .map(|g| app.games_root.join(&g.dir))
+                .unwrap_or_else(|| app.games_root.clone());
 
-                        if let Some(entry) = app.registry.games.get_mut(&game.dir) {
-                            entry.binary = rel.to_string_lossy().to_string();
-                            entry.is_windows = is_windows;
-                            entry.icon = Some(if is_windows { "💻".to_string() } else { "🐧".to_string() });
-
-                            let _ = create_launcher_script(
-                                &folder,
-                                rel,
-                                &game.display_name,
-                                is_windows,
-                                game.wine_prefix.as_deref().map(Path::new),
-                                game.wine_opts.as_ref(),
-                            );
-                            let _ = app.registry.save(&app.games_root);
-                            app.set_toast(format!("✓ Main binary set to '{}'", rel.display()));
-                        }
+            match key.code {
+                KeyCode::Esc => ActiveModal::None,
+                KeyCode::Up => {
+                    if selected_bin > 0 {
+                        selected_bin -= 1;
+                    } else if !filtered_indices.is_empty() {
+                        selected_bin = filtered_indices.len() - 1;
+                    }
+                    ActiveModal::ChangeBinary {
+                        binaries,
+                        filtered_indices,
+                        selected_bin,
+                        search_query,
                     }
                 }
-                app.reload_games();
-                ActiveModal::None
+                KeyCode::Down => {
+                    if !filtered_indices.is_empty() {
+                        selected_bin = (selected_bin + 1) % filtered_indices.len();
+                    }
+                    ActiveModal::ChangeBinary {
+                        binaries,
+                        filtered_indices,
+                        selected_bin,
+                        search_query,
+                    }
+                }
+                KeyCode::Backspace => {
+                    search_query.pop();
+                    filtered_indices = filter_binary_indices(&binaries, &game_dir, &search_query);
+                    selected_bin = 0;
+                    ActiveModal::ChangeBinary {
+                        binaries,
+                        filtered_indices,
+                        selected_bin,
+                        search_query,
+                    }
+                }
+                KeyCode::Char(c) => {
+                    search_query.push(c);
+                    filtered_indices = filter_binary_indices(&binaries, &game_dir, &search_query);
+                    selected_bin = 0;
+                    ActiveModal::ChangeBinary {
+                        binaries,
+                        filtered_indices,
+                        selected_bin,
+                        search_query,
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(&bin_idx) = filtered_indices.get(selected_bin) {
+                        if let Some(chosen) = binaries.get(bin_idx).cloned() {
+                            if let Some(game) = app.selected_game().cloned() {
+                                let folder = app.games_root.join(&game.dir);
+                                let rel = chosen.strip_prefix(&folder).unwrap_or(&chosen);
+                                let is_windows = rel
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("bat"))
+                                    .unwrap_or(false);
+
+                                if let Some(entry) = app.registry.games.get_mut(&game.dir) {
+                                    entry.binary = rel.to_string_lossy().to_string();
+                                    entry.is_windows = is_windows;
+                                    entry.icon = Some(if is_windows { "💻".to_string() } else { "🐧".to_string() });
+
+                                    let _ = create_launcher_script(
+                                        &folder,
+                                        rel,
+                                        &game.display_name,
+                                        is_windows,
+                                        game.wine_prefix.as_deref().map(Path::new),
+                                        game.wine_opts.as_ref(),
+                                    );
+                                    let _ = app.registry.save(&app.games_root);
+                                    app.set_toast(format!("✓ Main binary set to '{}'", rel.display()));
+                                }
+                            }
+                        }
+                    }
+                    app.reload_games();
+                    ActiveModal::None
+                }
+                _ => ActiveModal::ChangeBinary {
+                    binaries,
+                    filtered_indices,
+                    selected_bin,
+                    search_query,
+                },
             }
-            _ => ActiveModal::ChangeBinary {
-                binaries,
-                selected_bin,
-            },
-        },
+        }
         ActiveModal::RenameGame { mut input } => match key.code {
             KeyCode::Esc => ActiveModal::None,
             KeyCode::Backspace => {

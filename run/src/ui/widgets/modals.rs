@@ -53,9 +53,19 @@ pub fn render_modals(f: &mut Frame, app: &App, area: Rect) {
         }
         ActiveModal::ChangeBinary {
             binaries,
+            filtered_indices,
             selected_bin,
+            search_query,
         } => {
-            render_change_binary_modal(f, app, binaries, *selected_bin, area);
+            render_change_binary_modal(
+                f,
+                app,
+                binaries,
+                filtered_indices,
+                *selected_bin,
+                search_query,
+                area,
+            );
         }
         ActiveModal::RenameGame { input } => {
             render_rename_modal(f, input, area);
@@ -285,29 +295,59 @@ fn render_change_binary_modal(
     f: &mut Frame,
     app: &App,
     binaries: &[std::path::PathBuf],
+    filtered_indices: &[usize],
     selected: usize,
+    search_query: &str,
     area: Rect,
 ) {
-    let popup_area = centered_rect(75, 65, area);
+    let popup_area = centered_rect(80, 70, area);
     f.render_widget(Clear, popup_area);
 
+    let popup_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(5)])
+        .split(popup_area);
+
+    // Search bar
+    let search_content = Line::from(vec![
+        Span::styled("🔍 ", Style::default().fg(COLOR_YELLOW)),
+        if search_query.is_empty() {
+            Span::styled("Type to filter executables (e.g. x86_64, exe, start)...", Style::default().fg(COLOR_DARK_GREY))
+        } else {
+            Span::styled(search_query, Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+        },
+        Span::styled("█", Style::default().fg(COLOR_CYAN)),
+    ]);
+
+    let search_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BORDER_TYPE)
+        .border_style(style_border_active())
+        .title(" Filter Executables ")
+        .style(Style::default().bg(COLOR_BG_POPUP));
+
+    let search_widget = Paragraph::new(search_content).block(search_block);
+    f.render_widget(search_widget, popup_chunks[0]);
+
+    // Binary list
     let game_dir = app
         .selected_game()
         .map(|g| app.games_root.join(&g.dir))
         .unwrap_or_else(|| app.games_root.clone());
 
-    let items: Vec<ListItem> = binaries
+    let items: Vec<ListItem> = filtered_indices
         .iter()
         .enumerate()
-        .map(|(idx, bin)| {
-            let is_sel = idx == selected;
+        .map(|(display_idx, &bin_idx)| {
+            let bin = &binaries[bin_idx];
+            let is_sel = display_idx == selected;
             let rel = bin.strip_prefix(&game_dir).unwrap_or(bin);
             let size = bin.metadata().map(|m| format_file_size(m.len())).unwrap_or_else(|_| "Unknown".to_string());
             let (_, tag) = evaluate_binary_score(&game_dir, bin);
 
             let line = Line::from(vec![
                 Span::styled(if is_sel { "▶ " } else { "  " }, Style::default().fg(COLOR_CYAN)),
-                Span::styled(format!("{:<28} ", rel.display()), if is_sel { Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
+                Span::styled(format!("{:<30} ", rel.display()), if is_sel { Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
                 Span::styled(format!("{:>10} ", size), Style::default().fg(COLOR_GREY)),
                 Span::styled(tag, if tag.starts_with('⭐') { Style::default().fg(COLOR_YELLOW) } else { Style::default().fg(COLOR_DARK_GREY) }),
             ]);
@@ -315,15 +355,16 @@ fn render_change_binary_modal(
         })
         .collect();
 
+    let title = format!(" 🛠️ Select Executable ({}/{}) [Enter: Choose | Esc: Cancel] ", filtered_indices.len(), binaries.len());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BORDER_TYPE)
         .border_style(style_border_active())
-        .title(" 🛠️ Select Executable Binary [Enter: Choose | Esc: Cancel] ")
+        .title(title)
         .style(Style::default().bg(COLOR_BG_POPUP));
 
     let list = List::new(items).block(block);
-    f.render_widget(list, popup_area);
+    f.render_widget(list, popup_chunks[1]);
 }
 
 fn render_rename_modal(f: &mut Frame, input: &str, area: Rect) {

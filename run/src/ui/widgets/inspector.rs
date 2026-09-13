@@ -28,7 +28,7 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    let game_stats = app.stats.stats.get(&game.dir);
+    let game_stats = app.stats.get_stat(&game.dir);
     let rating = game_stats.map(|s| s.rating).unwrap_or(0);
     let playtime = game_stats.map(|s| s.playtime_seconds).unwrap_or(0);
     let play_count = game_stats.map(|s| s.play_count).unwrap_or(0);

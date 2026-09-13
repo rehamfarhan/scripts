@@ -32,7 +32,9 @@ pub enum ActiveModal {
     },
     ChangeBinary {
         binaries: Vec<PathBuf>,
+        filtered_indices: Vec<usize>,
         selected_bin: usize,
+        search_query: String,
     },
     RenameGame {
         input: String,
@@ -112,11 +114,11 @@ impl App {
             .cloned()
             .collect();
 
-        // Sort by last played descending
+        // Sort by last played descending (with case-insensitive backwards-compatible stats lookup!)
         let stats = &self.stats;
         list.sort_by(|a, b| {
-            let lp_a = stats.stats.get(&a.dir).and_then(|s| s.last_played.as_deref()).unwrap_or("");
-            let lp_b = stats.stats.get(&b.dir).and_then(|s| s.last_played.as_deref()).unwrap_or("");
+            let lp_a = stats.get_stat(&a.dir).and_then(|s| s.last_played.as_deref()).unwrap_or("");
+            let lp_b = stats.get_stat(&b.dir).and_then(|s| s.last_played.as_deref()).unwrap_or("");
             lp_b.cmp(lp_a)
         });
 

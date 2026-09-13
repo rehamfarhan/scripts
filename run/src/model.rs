@@ -135,6 +135,38 @@ impl GameStats {
         Self::default()
     }
 
+    pub fn get_stat(&self, dir_key: &str) -> Option<&GameStatEntry> {
+        if let Some(entry) = self.stats.get(dir_key) {
+            return Some(entry);
+        }
+        let lower = dir_key.to_lowercase();
+        self.stats.iter().find_map(|(k, v)| {
+            if k.to_lowercase() == lower {
+                Some(v)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn get_stat_mut(&mut self, dir_key: &str) -> &mut GameStatEntry {
+        if self.stats.contains_key(dir_key) {
+            return self.stats.get_mut(dir_key).unwrap();
+        }
+        let lower = dir_key.to_lowercase();
+        let existing_key = self
+            .stats
+            .keys()
+            .find(|k| k.to_lowercase() == lower)
+            .cloned();
+
+        if let Some(key) = existing_key {
+            self.stats.get_mut(&key).unwrap()
+        } else {
+            self.stats.entry(dir_key.to_string()).or_default()
+        }
+    }
+
     pub fn save(&self, games_root: &Path) -> std::io::Result<()> {
         let stats_path = games_root.join(STATS_FILENAME);
         let tmp_path = games_root.join(format!("{}.tmp", STATS_FILENAME));
