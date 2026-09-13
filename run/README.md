@@ -1,66 +1,78 @@
-# 🎮 Game Launcher (`run.py`)
+# 🎮 Game Launcher (`run`)
 
-An intelligent, interactive game launcher and manager utilizing `fzf` to discover new game directories, run setup wizards with real-time binary inspector previews, manage Windows `.exe` Wine prefixes, track total playtime and star ratings, stream live verbose terminal logs, provide a comprehensive `TAB` item utilities menu, create `.desktop` application menu entries, and support instant quick-launching (`run <name>`).
+A blazing-fast, nerdy-cool TUI game launcher, telemetry inspector, and session tracker rewritten natively in **Rust** using **Ratatui** and **Crossterm**.
 
 ---
 
 ## 📋 Technical Overview
 
-- **Language**: Python 3 (`#!/usr/bin/env python3`)
-- **Dependencies**: `fzf`, Python 3.8+
-- **System Location**: `run/run.py`
+- **Language**: Rust (Edition 2021)
+- **Framework**: [Ratatui](https://github.com/ratatui/ratatui) 0.30 + [Crossterm](https://github.com/crossterm-rs/crossterm) 0.29
+- **Startup Latency**: <2 ms (compiled native ELF binary)
 - **Target Command**: `run`
+- **Configuration Files**: `~/Games/.run_registry.json`, `~/Games/.run_stats.json`
 
 ---
 
 ## ✨ Features
 
-- **Automated Game Discovery & Disk Folder Wizard**: Automatically detects unregistered subdirectories in `~/Games`, allows disk directory renaming to clean game names, and guides you through selecting main executables and launcher wrappers.
-- **Centered `fzf` Interface**: Menu floats in the dead center of the terminal screen (X and Y axes) with rounded borders, title banners (`🏰 DirectPass's Game Dungeon 🎮`), and fixed-width column alignment for game names, star ratings, playtime counters, and relative timestamps.
-- **Recently Played Menu Sorting**: Automatically sorts games in the main menu by `last_played` timestamp descending (most recently played games appear at the top).
-- **TAB Item Utilities Sub-Menu (`⚙️ Utilities`)**: Pressing `TAB` on any game opens an interactive sub-menu:
-  - ✏️ **Rename Game Entry**: Rename display name and update launcher wrappers & `.desktop` entries.
-  - ⭐ **Rate Game**: Star rating picker (0 to 5 stars).
-  - 🍷 **Configure Wine / Execution**: Custom Wine prefix setup, Virtual Desktop resolution (`1920x1080`, `2560x1440`, etc.), DXVK Vulkan HUD (`fps`, `full`), and Windows OS version (`win10`, `win7`).
-  - 🛠️ **Change Main Executable Binary**: Re-scan game folder and pick a different main binary with live metadata preview.
-  - 🖥️ **Create / Recreate Desktop Shortcut**: Generate system `.desktop` file.
-  - 📁 **Open Game Folder**: Open game directory in file manager / terminal (`spf` / `xdg-open`).
-  - 🙈 **Hide / Ignore Game**: Soft-hide game from menu.
-  - 🗑️ **Delete Launcher Entry**: Un-register game profile completely.
-- **Attached Execution & Live Verbose Logs**: Games launch attached in the foreground, streaming engine logs and `stdout`/`stderr` outputs directly to your terminal. When the game finishes, session playtime is measured and logged to `.run_stats.json`.
-- **Forced `SDL_VIDEODRIVER=x11` Compatibility**: Unconditionally exports `export SDL_VIDEODRIVER=x11` in all `start_game.sh` wrapper scripts to prevent Wayland window creation crashes (e.g. for games like *Hacknet*).
-- **Real-Time Binary Inspector & Preview Panel**: Displays file size, architecture type, modification date, script peeks, and `⭐ Recommended` / `⚠️ Utility` status badges in a live `fzf` preview panel.
-- **Quick-Launch Mode (`run <name>`)**: Pass a game name query to immediately fuzzy-match and launch the game without opening the full menu.
-- **Desktop Entry Creator (`.desktop`)**: Optionally creates `.desktop` menu shortcuts in `~/.local/share/applications/` for Rofi, Dmenu, and application menus.
-- **Hidden Registry (`.run_registry.json`)**: Prevents re-scanning already configured folders.
+- **Dual-Pane Cyber-Dashboard**:
+  - **Left Pane (Library)**: Clean, focused game list with platform icons (`🐧`/`💻`), titles, and real-time fuzzy search filtering (`/`).
+  - **Right Top Pane (Telemetry & Specs Inspector)**: Showcases star ratings (`⭐⭐⭐⭐ (4/5 • Great)`), cumulative playtime (`14.2h`), total session count (`Session #7`), last played timestamp (`2h ago`), game folder, executable path, file size, Wine/SDL drivers, and active `keyd` keyboard patch.
+  - **Right Bottom Pane (Quick Actions & Hotkeys)**: Full keybinding cheatsheet and tips ticker.
+- **In-Place Modal Dialogs**: No screen flickering or nested sub-shells. In-terminal modals for:
+  - ⭐ **Rate Game**: 0 to 5 golden star selector.
+  - ⌨️ **Keyboard Patches (keyd)**: Zero-sudo runtime key remapping (e.g. Left Shift -> Left Ctrl for broken Ctrl keys) with automatic cleanup traps on exit.
+  - ⚙️ **Execution Settings**: Custom Wine prefix, Virtual Desktop resolution, DXVK Vulkan HUD, and SDL video driver overrides.
+  - 🛠️ **Change Main Binary**: Heuristic binary scanner with recommended badges (`⭐ Recommended Main Binary`).
+  - ✏️ **Rename Game**: Inline text editing with wrapper updates.
+  - 🧙 **New Games Onboarding Wizard**: Multi-step guided walkthrough for newly added game directories in `~/Games`.
+- **Zero-Sudo Keyboard Patches (`keyd`)**:
+  - Automatically executes `keyd bind` in-memory before launching.
+  - Injects cleanup traps in `start_game.sh` and launcher safety fallbacks so default keyboard bindings are always restored on exit.
+- **Attached Process Execution & Session Tracking**:
+  - Clean terminal handoff: streams game stdout/stderr directly to terminal.
+  - Wall-clock session duration tracking saved automatically to `.run_stats.json`.
+- **Centered Post-Game Session Recap Screen**:
+  - Color-coded recap card with rounded borders, sparkles (`✨`), duration, total playtime, rating, session end date, platform, and online stoic/gaming quotes (fetched asynchronously with offline fallbacks).
+- **Quick-Launch Mode (`run <query>`)**:
+  - Instant direct launch (<5ms) without opening the TUI dashboard:
+    ```bash
+    run balatro
+    run rerun
+    ```
 
 ---
 
-## 🚀 Setup & Installation
+## 🚀 Building & Installation
 
-Link the script to `/usr/local/bin` using `scrlink`:
+Compile the release binary:
 
 ```bash
-sudo scrlink run
+cargo build --release
+```
+
+Link the executable using `scrlink` or symlink directly:
+
+```bash
+sudo ln -sf "$(pwd)/run.sh" /usr/local/bin/run
 ```
 
 ---
 
-## 📖 Usage Examples
+## ⌨️ Keybindings
 
-```bash
-# Standard interactive launcher (scans new folders -> opens fzf menu)
-run
-
-# Quick-launch a game directly by name (fuzzy match)
-run cyberpunk
-run hacknet
-
-# Specify custom games directory
-run --games-dir /path/to/custom/games
-```
-
-### ⌨️ Hotkeys in Menu
-- **`ENTER`**: Launch selected game attached in foreground.
-- **`TAB`**: Open item utilities sub-menu for selected game (Rename, Rate, Wine config, Change binary, etc.).
-- **`ESC` / `Ctrl+C`**: Exit menu.
+| Key | Action |
+| :--- | :--- |
+| `Enter` | Launch selected game in foreground |
+| `r` | Rate game (0 - 5 Stars modal) |
+| `k` | Keyboard Patch (keyd remap modal) |
+| `c` | Execution & Video Driver settings |
+| `e` | Edit launcher wrapper script in `$EDITOR` |
+| `d` | Create system `.desktop` application shortcut |
+| `o` | Open game directory in file manager (`spf` / `xdg-open`) |
+| `m` | Change main executable binary |
+| `n` | Rename game entry |
+| `x` / `Delete` | Remove launcher entry (preserves playtime stats) |
+| `/` | Focus real-time search filter |
+| `q` / `Esc` | Quit |
