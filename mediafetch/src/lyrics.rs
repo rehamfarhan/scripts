@@ -127,6 +127,18 @@ impl LyricsManager {
             }
         }
 
+        // If FLAC, embed Vorbis LYRICS tag via metaflac
+        if audio_file.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("flac")).unwrap_or(false) {
+            let plain = lyrics.plain_lyrics.as_ref().or(lyrics.synced_lyrics.as_ref());
+            if let Some(plain_text) = plain {
+                let tag_arg = format!("LYRICS={}", plain_text);
+                let _ = std::process::Command::new("metaflac")
+                    .arg(format!("--set-tag={}", tag_arg))
+                    .arg(audio_file)
+                    .output();
+            }
+        }
+
         Ok((wrote_lrc, lrc_path))
     }
 }

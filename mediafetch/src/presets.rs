@@ -101,12 +101,16 @@ impl PresetType {
                 "-x",
                 "--audio-format", "mp3",
                 "--audio-quality", "320k",
+                "--convert-thumbnails", "png",
+                "--ppa", "thumbnailsconvertor:-vf crop=ih:ih",
                 "--embed-thumbnail",
                 "--embed-metadata",
             ],
             PresetType::Flac => vec![
                 "-x",
                 "--audio-format", "flac",
+                "--convert-thumbnails", "png",
+                "--ppa", "thumbnailsconvertor:-vf crop=ih:ih",
                 "--embed-thumbnail",
                 "--embed-metadata",
             ],
@@ -133,5 +137,68 @@ impl PresetType {
 
     pub fn should_fetch_lyrics(&self) -> bool {
         matches!(self, PresetType::Music | PresetType::Flac)
+    }
+
+    pub fn container_format(&self) -> &'static str {
+        match self {
+            PresetType::Video => "Matroska (.mkv)",
+            PresetType::Music => "MPEG Audio (.mp3 @ 320k CBR)",
+            PresetType::Flac => "Free Lossless Audio (.flac)",
+            PresetType::Shorts => "MPEG-4 (.mp4)",
+            PresetType::Podcast => "Ogg Opus (.opus)",
+            PresetType::Archive => "Best Available Container",
+        }
+    }
+
+    pub fn video_spec(&self) -> &'static str {
+        match self {
+            PresetType::Video => "1080p Max (H.265 / HEVC preferred)",
+            PresetType::Music => "N/A (Audio extraction)",
+            PresetType::Flac => "N/A (Lossless audio extraction)",
+            PresetType::Shorts => "1080p Max (9:16 Vertical Video)",
+            PresetType::Podcast => "N/A (Audio extraction)",
+            PresetType::Archive => "Unconstrained Source Max (4K/8K)",
+        }
+    }
+
+    pub fn audio_spec(&self) -> &'static str {
+        match self {
+            PresetType::Video => "Best source audio stream merged",
+            PresetType::Music => "320 kbps High Quality CBR",
+            PresetType::Flac => "Bit-perfect lossless stream",
+            PresetType::Shorts => "AAC / M4A stereo stream",
+            PresetType::Podcast => "Opus high-efficiency speech/music",
+            PresetType::Archive => "Uncompressed best audio stream",
+        }
+    }
+
+    pub fn subtitles_policy(&self) -> &'static str {
+        match self {
+            PresetType::Video => "English (en.*) merged as soft subs",
+            PresetType::Music => "N/A (Embedded lyrics used instead)",
+            PresetType::Flac => "N/A (Embedded lyrics used instead)",
+            PresetType::Shorts => "None (Hardcoded on video stream)",
+            PresetType::Podcast => "N/A",
+            PresetType::Archive => "All available subtitles embedded",
+        }
+    }
+
+    pub fn thumbnail_policy(&self) -> &'static str {
+        match self {
+            PresetType::Video => "Embedded PNG cover attachment",
+            PresetType::Music => "1:1 Square cropped (crop=ih:ih, PNG, ID3 APIC)",
+            PresetType::Flac => "1:1 Square cropped (crop=ih:ih, PNG, Vorbis Picture)",
+            PresetType::Shorts => "9:16 Vertical video thumbnail",
+            PresetType::Podcast => "Embedded podcast cover thumbnail",
+            PresetType::Archive => "Full resolution original thumbnail",
+        }
+    }
+
+    pub fn lyrics_policy(&self) -> &'static str {
+        match self {
+            PresetType::Music => "Auto LRCLIB (ID3 USLT frame + .lrc sidecar)",
+            PresetType::Flac => "Auto LRCLIB (Vorbis comments + .lrc sidecar)",
+            _ => "N/A",
+        }
     }
 }

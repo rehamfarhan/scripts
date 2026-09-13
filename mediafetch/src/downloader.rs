@@ -60,11 +60,12 @@ impl Downloader {
         let _ = tx.send(DownloadProgress::ProcessingStep("Spawning yt-dlp worker...".to_string()));
 
         let mut cmd = Command::new("yt-dlp");
+        cmd.kill_on_drop(true);
         cmd.args([
             "--newline",
             "--progress",
             "--progress-template",
-            "download:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._total_bytes_str)s",
+            "download:mediafetch:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._total_bytes_str)s",
             "--print",
             "before_dl:title:%(title)s",
             "--print",
@@ -113,8 +114,8 @@ impl Downloader {
                 resolved_title = t.trim().to_string();
             } else if let Some(u) = line.strip_prefix("uploader:") {
                 resolved_uploader = u.trim().to_string();
-            } else if line.starts_with("download:") {
-                let parts: Vec<&str> = line[9..].split('|').collect();
+            } else if let Some(rest) = line.strip_prefix("mediafetch:") {
+                let parts: Vec<&str> = rest.trim().split('|').collect();
                 if parts.len() >= 4 {
                     let percent_raw = parts[0].replace('%', "").trim().to_string();
                     let percent = percent_raw.parse::<f64>().unwrap_or(0.0);
@@ -122,24 +123,21 @@ impl Downloader {
                     let eta = parts[2].trim().to_string();
                     let size = parts[3].trim().to_string();
 
-                    if !speed.is_empty() && speed != "-- KiB/s" {
+                    if !speed.is_empty() && speed != "-- KiB/s" && speed != "NA" {
                         last_speed = speed.clone();
                     }
 
                     let _ = tx.send(DownloadProgress::Downloading {
                         percent,
-                        speed: if speed.is_empty() { "-- KiB/s".to_string() } else { speed },
-                        eta: if eta.is_empty() { "--:--".to_string() } else { eta },
-                        size: if size.is_empty() { "-- MiB".to_string() } else { size },
+                        speed: if speed.is_empty() || speed == "NA" { "-- KiB/s".to_string() } else { speed },
+                        eta: if eta.is_empty() || eta == "NA" { "--:--".to_string() } else { eta },
+                        size: if size.is_empty() || size == "NA" { "-- MiB".to_string() } else { size },
                     });
                 }
             } else if line.starts_with('/') {
                 // `after_move:filepath` prints the final full absolute path
-                let path = PathBuf::from(line);
-                if path.exists() {
-                    final_file_path = Some(path);
-                }
-            } else if line.contains("[ExtractAudio]") || line.contains("[Merger]") || line.contains("[Fixup") {
+                final_file_path = Some(PathBuf::from(line));
+            } else if line.contains("[ExtractAudio]") || line.contains("[Merger]") || line.contains("[Fixup") || line.contains("[EmbedThumbnail]") {
                 let _ = tx.send(DownloadProgress::ProcessingStep(line.to_string()));
             }
         }

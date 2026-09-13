@@ -216,38 +216,73 @@ fn render_inspector(f: &mut Frame, app: &AppState, area: Rect) {
         .title(" 🔍 Preset Inspector ");
 
     let target_dir = preset.target_directory();
-    let lyrics_tag = if preset.should_fetch_lyrics() {
-        Span::styled("LRCLIB (USLT embedded + .lrc sidecar)", Style::default().fg(Color::Green))
+
+    let lyrics_style = if preset.should_fetch_lyrics() {
+        Style::default().fg(Color::Green)
     } else {
-        Span::styled("Disabled", Style::default().fg(Color::DarkGray))
+        Style::default().fg(Color::DarkGray)
     };
 
-    let lines = vec![
+    let subs_style = if preset == PresetType::Video || preset == PresetType::Archive {
+        Style::default().fg(Color::LightCyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let mut lines = vec![
         Line::from(vec![
             Span::styled("Preset:       ", Style::default().fg(Color::DarkGray)),
             Span::styled(preset.title(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" ({})", preset.badge()), Style::default().fg(Color::LightBlue)),
+            Span::styled(format!("  [{}]", preset.badge()), Style::default().fg(Color::LightBlue)),
         ]),
         Line::from(vec![
             Span::styled("Destination:  ", Style::default().fg(Color::DarkGray)),
             Span::styled(target_dir.to_string_lossy(), Style::default().fg(Color::Yellow)),
         ]),
         Line::from(vec![
+            Span::styled("Container:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(preset.container_format(), Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("Video Spec:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(preset.video_spec(), Style::default().fg(Color::LightGreen)),
+        ]),
+        Line::from(vec![
+            Span::styled("Audio Spec:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(preset.audio_spec(), Style::default().fg(Color::LightMagenta)),
+        ]),
+        Line::from(vec![
+            Span::styled("Subtitles:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(preset.subtitles_policy(), subs_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Cover Art:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(preset.thumbnail_policy(), Style::default().fg(Color::LightYellow)),
+        ]),
+        Line::from(vec![
             Span::styled("Lyrics Tag:   ", Style::default().fg(Color::DarkGray)),
-            lyrics_tag,
-        ]),
-        Line::from(vec![
-            Span::styled("Thumbnails:   ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Embedded high-res / square cover", Style::default().fg(Color::LightCyan)),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Description:  ", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(vec![
-            Span::styled(preset.description(), Style::default().fg(Color::White)),
+            Span::styled(preset.lyrics_policy(), lyrics_style),
         ]),
     ];
+
+    if let Some(ref meta) = app.metadata {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("── Target Media ───────────────────────", Style::default().fg(Color::DarkGray)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Title:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(meta.display_title(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Creator: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(meta.display_uploader(), Style::default().fg(Color::Yellow)),
+            Span::styled("  •  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(meta.formatted_duration(), Style::default().fg(Color::Magenta)),
+            Span::styled("  •  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(meta.formatted_views(), Style::default().fg(Color::Green)),
+        ]));
+    }
 
     let p = Paragraph::new(lines)
         .block(block)

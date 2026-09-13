@@ -44,14 +44,19 @@ fn get_clipboard_url() -> Option<String> {
 }
 
 fn send_desktop_notification(summary: &DownloadSummary) {
+    let icon = if summary.preset.should_fetch_lyrics() || summary.preset == PresetType::Podcast {
+        "audio-x-generic"
+    } else {
+        "video-x-generic"
+    };
     let _ = Command::new("notify-send")
         .args([
             "-a",
             "MediaFetch",
             "-i",
-            "video-x-generic",
+            icon,
             "Download Completed",
-            &format!("{}\nSaved to {}", summary.title, summary.formatted_size),
+            &format!("{}\nSaved ({})", summary.title, summary.formatted_size),
         ])
         .spawn();
 }
@@ -258,7 +263,7 @@ async fn main() -> Result<()> {
             return Ok(());
         } else if let Some(p) = PresetType::from_str_loose(arg) {
             initial_preset = Some(p);
-        } else if arg.starts_with("http://") || arg.starts_with("https://") {
+        } else if !arg.starts_with('-') && initial_url.is_empty() {
             initial_url = arg.clone();
         }
     }
@@ -287,13 +292,19 @@ async fn main() -> Result<()> {
         let url_clone = app.url.clone();
         let tx_meta = tx.clone();
         tokio::spawn(async move {
-            if let Ok(meta) = MediaMetadata::fetch(&url_clone).await {
-                let _ = tx_meta.send(DownloadProgress::MetadataLoaded(meta));
+            match MediaMetadata::fetch(&url_clone).await {
+                Ok(meta) => {
+                    let _ = tx_meta.send(DownloadProgress::MetadataLoaded(meta));
+                }
+                Err(err) => {
+                    let _ = tx_meta.send(DownloadProgress::Failed(format!("Metadata error: {}", err)));
+                }
             }
         });
     }
 
     let mut completed_summary: Option<DownloadSummary> = None;
+    let mut dl_handle: Option<tokio::task::JoinHandle<()>> = None;
 
     // Main event loop
     loop {
@@ -312,6 +323,7 @@ async fn main() -> Result<()> {
                     app.metadata = Some(meta);
                 }
                 DownloadProgress::Downloading { percent, speed, eta, size } => {
+                    app.resolving = false;
                     app.downloading = true;
                     app.download_percent = percent;
                     app.download_speed = speed;
@@ -327,6 +339,7 @@ async fn main() -> Result<()> {
                     break;
                 }
                 DownloadProgress::Failed(err) => {
+                    app.resolving = false;
                     app.downloading = false;
                     app.error_message = Some(err);
                 }
@@ -345,13 +358,20 @@ async fn main() -> Result<()> {
                         KeyCode::Enter => {
                             if !app.input_buffer.trim().is_empty() {
                                 app.url = app.input_buffer.trim().to_string();
+                                app.metadata = None;
+                                app.error_message = None;
                                 app.input_mode = false;
                                 app.resolving = true;
                                 let url = app.url.clone();
                                 let tx_meta = tx.clone();
                                 tokio::spawn(async move {
-                                    if let Ok(meta) = MediaMetadata::fetch(&url).await {
-                                        let _ = tx_meta.send(DownloadProgress::MetadataLoaded(meta));
+                                    match MediaMetadata::fetch(&url).await {
+                                        Ok(meta) => {
+                                            let _ = tx_meta.send(DownloadProgress::MetadataLoaded(meta));
+                                        }
+                                        Err(err) => {
+                                            let _ = tx_meta.send(DownloadProgress::Failed(format!("Metadata error: {}", err)));
+                                        }
                                     }
                                 });
                             }
@@ -373,9 +393,15 @@ async fn main() -> Result<()> {
                 } else {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => {
+                            if let Some(h) = dl_handle.take() {
+                                h.abort();
+                            }
                             break;
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Some(h) = dl_handle.take() {
+                                h.abort();
+                            }
                             break;
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
@@ -388,15 +414,40 @@ async fn main() -> Result<()> {
                                 app.prev_preset();
                             }
                         }
-                        KeyCode::Char('1') => app.set_preset_by_idx(0),
-                        KeyCode::Char('2') => app.set_preset_by_idx(1),
-                        KeyCode::Char('3') => app.set_preset_by_idx(2),
-                        KeyCode::Char('4') => app.set_preset_by_idx(3),
-                        KeyCode::Char('5') => app.set_preset_by_idx(4),
-                        KeyCode::Char('6') => app.set_preset_by_idx(5),
+                        KeyCode::Char('1') => {
+                            if !app.downloading {
+                                app.set_preset_by_idx(0);
+                            }
+                        }
+                        KeyCode::Char('2') => {
+                            if !app.downloading {
+                                app.set_preset_by_idx(1);
+                            }
+                        }
+                        KeyCode::Char('3') => {
+                            if !app.downloading {
+                                app.set_preset_by_idx(2);
+                            }
+                        }
+                        KeyCode::Char('4') => {
+                            if !app.downloading {
+                                app.set_preset_by_idx(3);
+                            }
+                        }
+                        KeyCode::Char('5') => {
+                            if !app.downloading {
+                                app.set_preset_by_idx(4);
+                            }
+                        }
+                        KeyCode::Char('6') => {
+                            if !app.downloading {
+                                app.set_preset_by_idx(5);
+                            }
+                        }
                         KeyCode::Char('u') => {
                             if !app.downloading {
                                 app.input_buffer = app.url.clone();
+                                app.metadata = None;
                                 app.input_mode = true;
                             }
                         }
@@ -409,9 +460,9 @@ async fn main() -> Result<()> {
                                 let meta = app.metadata.clone().unwrap_or_default();
                                 let tx_dl = tx.clone();
 
-                                tokio::spawn(async move {
+                                dl_handle = Some(tokio::spawn(async move {
                                     let _ = Downloader::run(url, preset, meta, tx_dl).await;
-                                });
+                                }));
                             }
                         }
                         _ => {}
