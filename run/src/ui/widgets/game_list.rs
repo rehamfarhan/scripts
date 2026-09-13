@@ -58,14 +58,30 @@ pub fn render_game_list(f: &mut Frame, app: &App, area: Rect) {
     let search_widget = Paragraph::new(search_content).block(search_block);
     f.render_widget(search_widget, chunks[0]);
 
-    // 2. Game List
-    let items: Vec<ListItem> = app
-        .filtered_indices
+    // 2. Game List with viewport windowing
+    let list_height = chunks[1].height.saturating_sub(2) as usize;
+    let visible_count = list_height.max(1);
+    let total_items = app.filtered_indices.len();
+
+    let offset = if app.selected_index < visible_count {
+        0
+    } else {
+        app.selected_index + 1 - visible_count
+    };
+    let end = (offset + visible_count).min(total_items);
+    let visible_slice = if total_items > 0 && offset < total_items {
+        &app.filtered_indices[offset..end]
+    } else {
+        &[]
+    };
+
+    let items: Vec<ListItem> = visible_slice
         .iter()
         .enumerate()
-        .map(|(display_idx, &game_idx)| {
+        .map(|(rel_idx, &game_idx)| {
+            let actual_idx = offset + rel_idx;
             let game = &app.all_games[game_idx];
-            let is_selected = display_idx == app.selected_index;
+            let is_selected = actual_idx == app.selected_index;
 
             let icon = game.icon.as_deref().unwrap_or(if game.is_windows {
                 "💻"
@@ -109,10 +125,18 @@ pub fn render_game_list(f: &mut Frame, app: &App, area: Rect) {
 
     let total_count = app.all_games.len();
     let filtered_count = app.filtered_indices.len();
-    let title_text = if app.search_query.is_empty() {
-        format!(" Games ({}) ", total_count)
+    let scroll_hint = if filtered_count > visible_count {
+        let up = if offset > 0 { "▲" } else { " " };
+        let down = if end < filtered_count { "▼" } else { " " };
+        format!(" {} {} ", up, down)
     } else {
-        format!(" Games ({}/{}) ", filtered_count, total_count)
+        String::new()
+    };
+
+    let title_text = if app.search_query.is_empty() {
+        format!(" Games ({}){} ", total_count, scroll_hint)
+    } else {
+        format!(" Games ({}/{}){} ", filtered_count, total_count, scroll_hint)
     };
 
     let list_block = Block::default()

@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use crate::scanner::{evaluate_binary_score, format_file_size};
-use crate::ui::app::{ActiveModal, App, WizardStep};
+use crate::ui::app::{ActiveModal, App};
 use crate::ui::theme::{
     style_border_active, BORDER_TYPE, COLOR_BG_POPUP, COLOR_CYAN, COLOR_DARK_GREY, COLOR_GREEN,
     COLOR_GREY, COLOR_YELLOW,
@@ -74,19 +74,18 @@ pub fn render_modals(f: &mut Frame, app: &App, area: Rect) {
             folders,
             current_idx,
             binaries,
+            filtered_indices,
             selected_bin,
-            display_name,
-            step,
-            ..
+            search_query,
         } => {
             render_wizard_modal(
                 f,
                 folders,
                 *current_idx,
                 binaries,
+                filtered_indices,
                 *selected_bin,
-                display_name,
-                step,
+                search_query,
                 area,
             );
         }
@@ -329,18 +328,35 @@ fn render_change_binary_modal(
     let search_widget = Paragraph::new(search_content).block(search_block);
     f.render_widget(search_widget, popup_chunks[0]);
 
-    // Binary list
+    // Binary list with viewport windowing
     let game_dir = app
         .selected_game()
         .map(|g| app.games_root.join(&g.dir))
         .unwrap_or_else(|| app.games_root.clone());
 
-    let items: Vec<ListItem> = filtered_indices
+    let list_height = popup_chunks[1].height.saturating_sub(2) as usize;
+    let visible_count = list_height.max(1);
+    let total_items = filtered_indices.len();
+
+    let offset = if selected < visible_count {
+        0
+    } else {
+        selected + 1 - visible_count
+    };
+    let end = (offset + visible_count).min(total_items);
+    let visible_slice = if total_items > 0 && offset < total_items {
+        &filtered_indices[offset..end]
+    } else {
+        &[]
+    };
+
+    let items: Vec<ListItem> = visible_slice
         .iter()
         .enumerate()
-        .map(|(display_idx, &bin_idx)| {
+        .map(|(rel_idx, &bin_idx)| {
+            let actual_idx = offset + rel_idx;
             let bin = &binaries[bin_idx];
-            let is_sel = display_idx == selected;
+            let is_sel = actual_idx == selected;
             let rel = bin.strip_prefix(&game_dir).unwrap_or(bin);
             let size = bin.metadata().map(|m| format_file_size(m.len())).unwrap_or_else(|_| "Unknown".to_string());
             let (_, tag) = evaluate_binary_score(&game_dir, bin);
@@ -355,7 +371,20 @@ fn render_change_binary_modal(
         })
         .collect();
 
-    let title = format!(" 🛠️ Select Executable ({}/{}) [Enter: Choose | Esc: Cancel] ", filtered_indices.len(), binaries.len());
+    let pos_text = if total_items > 0 {
+        format!("{}/{}", selected + 1, total_items)
+    } else {
+        "0/0".to_string()
+    };
+    let scroll_hint = if total_items > visible_count {
+        let up = if offset > 0 { "▲" } else { " " };
+        let down = if end < total_items { "▼" } else { " " };
+        format!(" {} {} ", up, down)
+    } else {
+        String::new()
+    };
+
+    let title = format!(" 🛠️ Select Executable ({}){} [Enter: Choose | Esc: Cancel] ", pos_text, scroll_hint);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BORDER_TYPE)
@@ -400,91 +429,104 @@ fn render_wizard_modal(
     folders: &[std::path::PathBuf],
     current_idx: usize,
     binaries: &[std::path::PathBuf],
+    filtered_indices: &[usize],
     selected_bin: usize,
-    display_name: &str,
-    step: &WizardStep,
+    search_query: &str,
     area: Rect,
 ) {
-    let popup_area = centered_rect(70, 60, area);
+    let popup_area = centered_rect(80, 70, area);
     f.render_widget(Clear, popup_area);
 
-    let total = folders.len();
+    let total_folders = folders.len();
     let current_folder = &folders[current_idx];
     let folder_name = current_folder.file_name().unwrap_or_default().to_string_lossy();
 
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled(format!("📁 New Folder Discovered ({}/{}): ", current_idx + 1, total), Style::default().fg(COLOR_YELLOW).add_modifier(Modifier::BOLD)),
-            Span::styled(folder_name.to_string(), Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from(""),
-    ];
+    let popup_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(5)])
+        .split(popup_area);
 
-    match step {
-        WizardStep::SelectBinary => {
-            lines.push(Line::from(vec![
-                Span::styled("Step 1: Select Main Executable Binary:", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            ]));
-            lines.push(Line::from(""));
+    // Search bar
+    let search_content = Line::from(vec![
+        Span::styled("🔍 ", Style::default().fg(COLOR_YELLOW)),
+        if search_query.is_empty() {
+            Span::styled("Type to filter binaries (e.g. x86_64, exe, start)...", Style::default().fg(COLOR_DARK_GREY))
+        } else {
+            Span::styled(search_query, Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+        },
+        Span::styled("█", Style::default().fg(COLOR_CYAN)),
+    ]);
 
-            for (idx, bin) in binaries.iter().enumerate() {
-                let is_sel = idx == selected_bin;
-                let rel = bin.strip_prefix(current_folder).unwrap_or(bin);
-                let size = bin.metadata().map(|m| format_file_size(m.len())).unwrap_or_else(|_| "".to_string());
-                let (_, tag) = evaluate_binary_score(current_folder, bin);
+    let search_title = format!(" 📁 New Folder ({}/{}): {} ", current_idx + 1, total_folders, folder_name);
+    let search_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BORDER_TYPE)
+        .border_style(style_border_active())
+        .title(search_title)
+        .style(Style::default().bg(COLOR_BG_POPUP));
 
-                lines.push(Line::from(vec![
-                    Span::styled(if is_sel { " ▶ " } else { "   " }, Style::default().fg(COLOR_CYAN)),
-                    Span::styled(format!("{:<26} ", rel.display()), if is_sel { Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
-                    Span::styled(format!("{:>8} ", size), Style::default().fg(COLOR_GREY)),
-                    Span::styled(tag, if tag.starts_with('⭐') { Style::default().fg(COLOR_YELLOW) } else { Style::default().fg(COLOR_DARK_GREY) }),
-                ]));
-            }
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled(" [Enter] Next Step   [s] Skip Folder   [i] Ignore Directory", Style::default().fg(COLOR_DARK_GREY)),
-            ]));
-        }
-        WizardStep::NameGame => {
-            lines.push(Line::from(vec![
-                Span::styled("Step 2: Confirm Game Display Name:", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            ]));
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("  Display Name: ", Style::default().fg(COLOR_YELLOW)),
-                Span::styled(display_name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::styled("█", Style::default().fg(COLOR_CYAN)),
-            ]));
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled(" [Enter] Confirm & Next   [Backspace] Edit", Style::default().fg(COLOR_DARK_GREY)),
-            ]));
-        }
-        WizardStep::ConfigureSettings => {
-            lines.push(Line::from(vec![
-                Span::styled("Step 3: Ready to Register & Generate Launcher Wrapper!", Style::default().fg(COLOR_GREEN).add_modifier(Modifier::BOLD)),
-            ]));
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("  • Automatically generates start_game.sh wrapper with safe exit traps.", Style::default().fg(Color::White)),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("  • Registers game in library with zero-sudo keyd support.", Style::default().fg(Color::White)),
-            ]));
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled(" [Enter] Finish Setup & Add Game", Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD)),
-            ]));
-        }
-    }
+    let search_widget = Paragraph::new(search_content).block(search_block);
+    f.render_widget(search_widget, popup_chunks[0]);
 
+    // Binary list with viewport windowing
+    let list_height = popup_chunks[1].height.saturating_sub(2) as usize;
+    let visible_count = list_height.max(1);
+    let total_items = filtered_indices.len();
+
+    let offset = if selected_bin < visible_count {
+        0
+    } else {
+        selected_bin + 1 - visible_count
+    };
+    let end = (offset + visible_count).min(total_items);
+    let visible_slice = if total_items > 0 && offset < total_items {
+        &filtered_indices[offset..end]
+    } else {
+        &[]
+    };
+
+    let items: Vec<ListItem> = visible_slice
+        .iter()
+        .enumerate()
+        .map(|(rel_idx, &bin_idx)| {
+            let actual_idx = offset + rel_idx;
+            let bin = &binaries[bin_idx];
+            let is_sel = actual_idx == selected_bin;
+            let rel = bin.strip_prefix(current_folder).unwrap_or(bin);
+            let size = bin.metadata().map(|m| format_file_size(m.len())).unwrap_or_else(|_| "Unknown".to_string());
+            let (_, tag) = evaluate_binary_score(current_folder, bin);
+
+            let line = Line::from(vec![
+                Span::styled(if is_sel { "▶ " } else { "  " }, Style::default().fg(COLOR_CYAN)),
+                Span::styled(format!("{:<30} ", rel.display()), if is_sel { Style::default().fg(COLOR_CYAN).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) }),
+                Span::styled(format!("{:>10} ", size), Style::default().fg(COLOR_GREY)),
+                Span::styled(tag, if tag.starts_with('⭐') { Style::default().fg(COLOR_YELLOW) } else { Style::default().fg(COLOR_DARK_GREY) }),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let pos_text = if total_items > 0 {
+        format!("{}/{}", selected_bin + 1, total_items)
+    } else {
+        "0/0".to_string()
+    };
+    let scroll_hint = if total_items > visible_count {
+        let up = if offset > 0 { "▲" } else { " " };
+        let down = if end < total_items { "▼" } else { " " };
+        format!(" {} {} ", up, down)
+    } else {
+        String::new()
+    };
+
+    let title = format!(" 🧙 Select Main Binary ({}){} [Enter: Add Game | s: Skip | i: Ignore] ", pos_text, scroll_hint);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BORDER_TYPE)
         .border_style(style_border_active())
-        .title(" 🧙 New Game Onboarding Wizard ")
+        .title(title)
         .style(Style::default().bg(COLOR_BG_POPUP));
 
-    let widget = Paragraph::new(lines).block(block);
-    f.render_widget(widget, popup_area);
+    let list = List::new(items).block(block);
+    f.render_widget(list, popup_chunks[1]);
 }

@@ -7,13 +7,6 @@ use crate::config::IGNORE_DIRS;
 use crate::model::{GameEntry, GameRegistry, GameStats, WineOpts};
 use crate::scanner::scan_executables;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum WizardStep {
-    SelectBinary,
-    NameGame,
-    ConfigureSettings,
-}
-
 #[derive(Debug, Clone)]
 pub enum ActiveModal {
     None,
@@ -43,10 +36,9 @@ pub enum ActiveModal {
         folders: Vec<PathBuf>,
         current_idx: usize,
         binaries: Vec<PathBuf>,
+        filtered_indices: Vec<usize>,
         selected_bin: usize,
-        display_name: String,
-        step: WizardStep,
-        opts: WineOpts,
+        search_query: String,
     },
 }
 
@@ -190,20 +182,15 @@ impl App {
         if !unregistered.is_empty() {
             let first_folder = &unregistered[0];
             let binaries = scan_executables(first_folder, 2);
-            let display_name = first_folder
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .replace(['_', '-'], " ");
+            let filtered_indices: Vec<usize> = (0..binaries.len()).collect();
 
             self.active_modal = ActiveModal::NewGameWizard {
                 folders: unregistered,
                 current_idx: 0,
                 binaries,
+                filtered_indices,
                 selected_bin: 0,
-                display_name,
-                step: WizardStep::SelectBinary,
-                opts: WineOpts::default(),
+                search_query: String::new(),
             };
         }
     }

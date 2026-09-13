@@ -4,9 +4,9 @@ use fuzzy_matcher::FuzzyMatcher;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::model::GameEntry;
+use crate::model::WineOpts;
 use crate::scanner::{create_desktop_entry, create_launcher_script, scan_executables};
-use crate::ui::app::{ActiveModal, App, WizardStep};
+use crate::ui::app::{ActiveModal, App};
 
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // 1. Handle Active Modals
@@ -584,217 +584,206 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
             folders,
             mut current_idx,
             mut binaries,
+            mut filtered_indices,
             mut selected_bin,
-            mut display_name,
-            mut step,
-            opts,
-        } => match step {
-            WizardStep::SelectBinary => match key.code {
+            mut search_query,
+        } => {
+            let current_folder = folders[current_idx].clone();
+            let folder_name = current_folder
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            match key.code {
                 KeyCode::Esc | KeyCode::Char('s') => {
                     if current_idx + 1 < folders.len() {
                         current_idx += 1;
                         let next_folder = &folders[current_idx];
                         binaries = scan_executables(next_folder, 2);
+                        filtered_indices = (0..binaries.len()).collect();
                         selected_bin = 0;
-                        display_name = next_folder
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .replace(['_', '-'], " ");
-                        step = WizardStep::SelectBinary;
+                        search_query.clear();
                         ActiveModal::NewGameWizard {
                             folders,
                             current_idx,
                             binaries,
+                            filtered_indices,
                             selected_bin,
-                            display_name,
-                            step,
-                            opts,
+                            search_query,
                         }
                     } else {
+                        app.reload_games();
+                        ActiveModal::None
+                    }
+                }
+                KeyCode::Char('i') => {
+                    // Permanently ignore directory
+                    app.registry.games.insert(
+                        folder_name.clone(),
+                        crate::model::GameEntry {
+                            dir: folder_name.clone(),
+                            display_name: folder_name.replace(['_', '-'], " "),
+                            binary: String::new(),
+                            is_windows: false,
+                            wine_prefix: None,
+                            wine_opts: None,
+                            icon: None,
+                            launcher_script: None,
+                            desktop_entry: None,
+                            ignored: Some(true),
+                            custom_wrapper: None,
+                        },
+                    );
+                    let _ = app.registry.save(&app.games_root);
+                    app.set_toast(format!("🚫 Ignored folder '{}'", folder_name));
+
+                    if current_idx + 1 < folders.len() {
+                        current_idx += 1;
+                        let next_folder = &folders[current_idx];
+                        binaries = scan_executables(next_folder, 2);
+                        filtered_indices = (0..binaries.len()).collect();
+                        selected_bin = 0;
+                        search_query.clear();
+                        ActiveModal::NewGameWizard {
+                            folders,
+                            current_idx,
+                            binaries,
+                            filtered_indices,
+                            selected_bin,
+                            search_query,
+                        }
+                    } else {
+                        app.reload_games();
                         ActiveModal::None
                     }
                 }
                 KeyCode::Up => {
                     if selected_bin > 0 {
                         selected_bin -= 1;
-                    } else if !binaries.is_empty() {
-                        selected_bin = binaries.len() - 1;
+                    } else if !filtered_indices.is_empty() {
+                        selected_bin = filtered_indices.len() - 1;
                     }
                     ActiveModal::NewGameWizard {
                         folders,
                         current_idx,
                         binaries,
+                        filtered_indices,
                         selected_bin,
-                        display_name,
-                        step,
-                        opts,
+                        search_query,
                     }
                 }
                 KeyCode::Down => {
-                    if !binaries.is_empty() {
-                        selected_bin = (selected_bin + 1) % binaries.len();
+                    if !filtered_indices.is_empty() {
+                        selected_bin = (selected_bin + 1) % filtered_indices.len();
                     }
                     ActiveModal::NewGameWizard {
                         folders,
                         current_idx,
                         binaries,
+                        filtered_indices,
                         selected_bin,
-                        display_name,
-                        step,
-                        opts,
+                        search_query,
                     }
                 }
-                KeyCode::Enter => {
-                    if !binaries.is_empty() {
-                        step = WizardStep::NameGame;
-                    }
-                    ActiveModal::NewGameWizard {
-                        folders,
-                        current_idx,
-                        binaries,
-                        selected_bin,
-                        display_name,
-                        step,
-                        opts,
-                    }
-                }
-                _ => ActiveModal::NewGameWizard {
-                    folders,
-                    current_idx,
-                    binaries,
-                    selected_bin,
-                    display_name,
-                    step,
-                    opts,
-                },
-            },
-            WizardStep::NameGame => match key.code {
                 KeyCode::Backspace => {
-                    display_name.pop();
+                    search_query.pop();
+                    filtered_indices = filter_binary_indices(&binaries, &current_folder, &search_query);
+                    selected_bin = 0;
                     ActiveModal::NewGameWizard {
                         folders,
                         current_idx,
                         binaries,
+                        filtered_indices,
                         selected_bin,
-                        display_name,
-                        step,
-                        opts,
+                        search_query,
                     }
                 }
                 KeyCode::Char(c) => {
-                    display_name.push(c);
+                    search_query.push(c);
+                    filtered_indices = filter_binary_indices(&binaries, &current_folder, &search_query);
+                    selected_bin = 0;
                     ActiveModal::NewGameWizard {
                         folders,
                         current_idx,
                         binaries,
+                        filtered_indices,
                         selected_bin,
-                        display_name,
-                        step,
-                        opts,
+                        search_query,
                     }
                 }
                 KeyCode::Enter => {
-                    if !display_name.trim().is_empty() {
-                        step = WizardStep::ConfigureSettings;
-                    }
-                    ActiveModal::NewGameWizard {
-                        folders,
-                        current_idx,
-                        binaries,
-                        selected_bin,
-                        display_name,
-                        step,
-                        opts,
-                    }
-                }
-                _ => ActiveModal::NewGameWizard {
-                    folders,
-                    current_idx,
-                    binaries,
-                    selected_bin,
-                    display_name,
-                    step,
-                    opts,
-                },
-            },
-            WizardStep::ConfigureSettings => {
-                if key.code == KeyCode::Enter {
-                    let folder = &folders[current_idx];
-                    let dir_name = folder.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    if let Some(bin) = binaries.get(selected_bin) {
-                        let rel = bin.strip_prefix(folder).unwrap_or(bin);
-                        let is_windows = rel
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("bat"))
-                            .unwrap_or(false);
+                    if let Some(&bin_idx) = filtered_indices.get(selected_bin) {
+                        if let Some(chosen) = binaries.get(bin_idx).cloned() {
+                            let rel = chosen.strip_prefix(&current_folder).unwrap_or(&chosen);
+                            let is_windows = rel
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("bat"))
+                                .unwrap_or(false);
 
-                        let _ = create_launcher_script(
-                            folder,
-                            rel,
-                            &display_name,
-                            is_windows,
-                            None,
-                            Some(&opts),
-                        );
+                            let display_name = folder_name.replace(['_', '-'], " ");
+                            let default_opts = WineOpts::default();
 
-                        app.registry.games.insert(
-                            dir_name.clone(),
-                            GameEntry {
-                                dir: dir_name.clone(),
-                                display_name: display_name.clone(),
-                                binary: rel.to_string_lossy().to_string(),
+                            let _ = create_launcher_script(
+                                &current_folder,
+                                rel,
+                                &display_name,
                                 is_windows,
-                                wine_prefix: None,
-                                wine_opts: Some(opts.clone()),
-                                icon: Some(if is_windows { "💻".to_string() } else { "🐧".to_string() }),
-                                launcher_script: Some("start_game.sh".to_string()),
-                                desktop_entry: None,
-                                ignored: Some(false),
-                                custom_wrapper: Some(false),
-                            },
-                        );
+                                None,
+                                Some(&default_opts),
+                            );
 
-                        let _ = app.registry.save(&app.games_root);
-                        app.set_toast(format!("✓ Registered '{}'", display_name));
+                            app.registry.games.insert(
+                                folder_name.clone(),
+                                crate::model::GameEntry {
+                                    dir: folder_name.clone(),
+                                    display_name: display_name.clone(),
+                                    binary: rel.to_string_lossy().to_string(),
+                                    is_windows,
+                                    wine_prefix: None,
+                                    wine_opts: Some(default_opts),
+                                    icon: Some(if is_windows { "💻".to_string() } else { "🐧".to_string() }),
+                                    launcher_script: Some("start_game.sh".to_string()),
+                                    desktop_entry: None,
+                                    ignored: Some(false),
+                                    custom_wrapper: Some(false),
+                                },
+                            );
+
+                            let _ = app.registry.save(&app.games_root);
+                            app.set_toast(format!("✓ Added '{}' ({})", display_name, rel.display()));
+                        }
                     }
 
                     if current_idx + 1 < folders.len() {
                         current_idx += 1;
                         let next_folder = &folders[current_idx];
                         binaries = scan_executables(next_folder, 2);
+                        filtered_indices = (0..binaries.len()).collect();
                         selected_bin = 0;
-                        display_name = next_folder
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .replace(['_', '-'], " ");
-                        step = WizardStep::SelectBinary;
+                        search_query.clear();
                         ActiveModal::NewGameWizard {
                             folders,
                             current_idx,
                             binaries,
+                            filtered_indices,
                             selected_bin,
-                            display_name,
-                            step,
-                            opts,
+                            search_query,
                         }
                     } else {
                         app.reload_games();
                         ActiveModal::None
                     }
-                } else {
-                    ActiveModal::NewGameWizard {
-                        folders,
-                        current_idx,
-                        binaries,
-                        selected_bin,
-                        display_name,
-                        step,
-                        opts,
-                    }
                 }
+                _ => ActiveModal::NewGameWizard {
+                    folders,
+                    current_idx,
+                    binaries,
+                    filtered_indices,
+                    selected_bin,
+                    search_query,
+                },
             }
         },
         ActiveModal::None => ActiveModal::None,

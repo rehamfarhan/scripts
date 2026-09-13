@@ -25,11 +25,11 @@ pub fn evaluate_binary_score(game_dir: &Path, bin_path: &Path) -> (i32, &'static
         .unwrap_or("")
         .to_lowercase();
 
-    let mut score = 100;
+    let mut score = 50;
 
     let uninstaller_keywords = [
         "unins", "uninstall", "crash", "bugreport", "dxsetup", "vcredist", "redist", "setup",
-        "update",
+        "update", "helper", "config", "tool", "editor", "launcher_backup",
     ];
     if uninstaller_keywords.iter().any(|&k| file_name.contains(k)) {
         score -= 200;
@@ -56,16 +56,30 @@ pub fn evaluate_binary_score(game_dir: &Path, bin_path: &Path) -> (i32, &'static
         score += 150;
     }
 
+    // Common native launcher script names
+    if file_name == "start.sh"
+        || file_name == "run.sh"
+        || file_name == "launch.sh"
+        || file_name == "start_game.sh"
+    {
+        score += 120;
+    }
+
+    // Binary architecture match
+    if file_name.ends_with(".x86_64") || file_name.ends_with(".bin.x86_64") {
+        score += 80;
+    }
+
     if let Ok(metadata) = bin_path.metadata() {
         let size = metadata.len();
         if size > 10 * 1024 * 1024 {
-            score += 80;
-        } else if size > 2 * 1024 * 1024 {
             score += 40;
+        } else if size > 2 * 1024 * 1024 {
+            score += 20;
         }
     }
 
-    let tag = if score >= 100 {
+    let tag = if score >= 150 {
         "⭐ Recommended Main Binary"
     } else {
         "Executable"
@@ -75,6 +89,15 @@ pub fn evaluate_binary_score(game_dir: &Path, bin_path: &Path) -> (i32, &'static
 
 pub fn scan_executables(game_dir: &Path, max_depth: usize) -> Vec<PathBuf> {
     let mut executables = Vec::new();
+
+    // Blacklisted non-executable extensions (even if chmod +x)
+    let non_exec_exts = [
+        "bmp", "png", "jpg", "jpeg", "gif", "ico", "svg", "webp", "tga", "dds",
+        "pak", "dat", "pck", "assets", "asset", "res", "resource", "resources", "bank", "fsb", "unity3d", "bundle",
+        "dll", "so", "dylib", "pdb", "config", "manifest", "hash", "info", "json", "xml", "txt", "md", "cfg", "ini", "log", "yaml", "yml",
+        "wav", "ogg", "mp3", "flac", "mp4", "webm", "mkv", "avi",
+        "ttf", "otf", "woff", "woff2",
+    ];
 
     for entry in WalkDir::new(game_dir)
         .max_depth(max_depth)
@@ -96,6 +119,16 @@ pub fn scan_executables(game_dir: &Path, max_depth: usize) -> Vec<PathBuf> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_lowercase();
+
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+
+            if non_exec_exts.contains(&ext.as_str()) {
+                continue;
+            }
 
             let is_windows_bin = name_lower.ends_with(".exe")
                 || name_lower.ends_with(".bat")
@@ -277,7 +310,7 @@ mod tests {
         assert!(tag_unins.contains("Uninstaller"));
 
         let (score_match, tag_match) = evaluate_binary_score(Path::new("/games/balatro"), Path::new("/games/balatro/Balatro.exe"));
-        assert!(score_match >= 250);
+        assert!(score_match >= 150);
         assert_eq!(tag_match, "⭐ Recommended Main Binary");
     }
 }
