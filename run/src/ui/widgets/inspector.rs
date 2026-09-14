@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use std::fs;
 
-use crate::model::{format_playtime, format_relative_time, format_star_rating};
+use crate::model::{format_last_played, format_playtime, format_star_rating};
 use crate::scanner::format_file_size;
 use crate::ui::app::App;
 use crate::ui::theme::{
@@ -149,18 +149,20 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(format!("  (Total Sessions: {})", play_count), Style::default().fg(COLOR_GREY)),
         ]),
-        Line::from(vec![
-            Span::styled("  🕒 Last Played:      ", style_meta_label()),
-            Span::styled(
-                format_relative_time(last_played_iso),
-                Style::default().fg(Color::White),
-            ),
-            if let Some(iso) = last_played_iso {
-                Span::styled(format!("  [{}]", iso), Style::default().fg(COLOR_GREY))
-            } else {
-                Span::raw("")
-            },
-        ]),
+        {
+            let (last_played_rel, last_played_date) = format_last_played(last_played_iso);
+            Line::from(vec![
+                Span::styled("  🕒 Last Played:      ", style_meta_label()),
+                Span::styled(
+                    last_played_rel,
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    last_played_date,
+                    Style::default().fg(COLOR_GREY),
+                ),
+            ])
+        },
         Line::from(""),
 
         // 3. Section: Technical Specifications & Execution
@@ -208,11 +210,6 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(COLOR_GREY)
                 },
             ),
-            if keyd_patch != "Disabled" {
-                Span::styled(" (Auto keyd bind on start, reset on exit)", Style::default().fg(COLOR_GREY))
-            } else {
-                Span::raw("")
-            },
         ]),
     ];
 

@@ -20,12 +20,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     if app.is_searching {
         match key.code {
             KeyCode::Esc => {
-                if !app.search_query.is_empty() {
-                    app.search_query.clear();
-                    app.apply_filter();
-                } else {
-                    app.is_searching = false;
-                }
+                app.is_searching = false;
             }
             KeyCode::Enter => {
                 if let Some(game) = app.selected_game().cloned() {
@@ -53,8 +48,16 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 
     // 3. Main Dashboard Navigation & Hotkeys
     match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => {
+        KeyCode::Char('q') => {
             app.should_quit = true;
+        }
+        KeyCode::Esc => {
+            if !app.search_query.is_empty() {
+                app.search_query.clear();
+                app.apply_filter();
+            } else {
+                app.should_quit = true;
+            }
         }
         KeyCode::Char('/') => {
             app.is_searching = true;

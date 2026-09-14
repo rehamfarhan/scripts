@@ -193,9 +193,9 @@ pub fn format_playtime(seconds: u64) -> String {
     format!("{:.1}h", hours)
 }
 
-pub fn format_relative_time(iso_str: Option<&str>) -> String {
-    let Some(iso) = iso_str else {
-        return "never".to_string();
+pub fn format_last_played(iso: Option<&str>) -> (String, String) {
+    let Some(iso) = iso else {
+        return ("Never".to_string(), String::new());
     };
     match chrono::DateTime::parse_from_rfc3339(iso) {
         Ok(dt) => {
@@ -203,7 +203,8 @@ pub fn format_relative_time(iso_str: Option<&str>) -> String {
             let now = chrono::Utc::now();
             let duration = now.signed_duration_since(utc_dt);
             let secs = duration.num_seconds();
-            if secs < 60 {
+
+            let relative = if secs < 60 {
                 "just now".to_string()
             } else if secs < 3600 {
                 format!("{}m ago", duration.num_minutes())
@@ -215,9 +216,12 @@ pub fn format_relative_time(iso_str: Option<&str>) -> String {
                 format!("{}d ago", duration.num_days())
             } else {
                 utc_dt.format("%b %d, %Y").to_string()
-            }
+            };
+
+            let date_str = utc_dt.format("%b %d, %Y").to_string();
+            (relative, format!("  ({})", date_str))
         }
-        Err(_) => "recently".to_string(),
+        Err(_) => ("recently".to_string(), String::new()),
     }
 }
 
