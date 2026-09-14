@@ -21,7 +21,14 @@ fn main() -> std::io::Result<()> {
 
     let mut i = 0;
     while i < args.len() {
-        if args[i] == "--games-dir" && i + 1 < args.len() {
+        if args[i] == "-v" || args[i] == "--version" {
+            println!("run v{}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        } else if args[i] == "-h" || args[i] == "--help" {
+            println!("run v{} - Fast TUI game launcher & session tracker", env!("CARGO_PKG_VERSION"));
+            println!("\nUsage:\n  run [OPTIONS] [GAME_NAME]\n\nOptions:\n  -v, --version           Print version\n  -h, --help              Print help\n      --games-dir <PATH>  Specify custom games directory\n\nArguments:\n  [GAME_NAME]             Direct quick-launch by fuzzy name");
+            return Ok(());
+        } else if args[i] == "--games-dir" && i + 1 < args.len() {
             games_dir = Some(PathBuf::from(&args[i + 1]));
             i += 2;
         } else if !args[i].starts_with('-') && query.is_none() {

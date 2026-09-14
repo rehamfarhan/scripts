@@ -48,15 +48,16 @@ pub fn run_tui(games_root: PathBuf) -> io::Result<()> {
 
     while !app.should_quit {
         terminal.draw(|f| {
-            let layout = DashboardLayout::new(f.area());
+            let layout = DashboardLayout::new(f.area(), app.show_quick_actions);
 
-            // 1. Header Bar
+            // 1. Header Bar (Centered)
             let title_text = main_title();
             let header_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BORDER_TYPE)
                 .border_style(Style::default().fg(COLOR_DARK_GREY));
-            let header_widget = Paragraph::new(format!("  {}", title_text))
+            let header_widget = Paragraph::new(title_text)
+                .alignment(ratatui::layout::Alignment::Center)
                 .style(style_title())
                 .block(header_block);
             f.render_widget(header_widget, layout.header);
@@ -67,8 +68,10 @@ pub fn run_tui(games_root: PathBuf) -> io::Result<()> {
             // 3. Right Top Inspector
             render_inspector(f, &app, layout.right_inspector);
 
-            // 4. Right Bottom Hotkeys & Tips
-            render_hotkeys(f, &app, layout.right_hotkeys);
+            // 4. Right Bottom Hotkeys & Tips (if enabled)
+            if app.show_quick_actions {
+                render_hotkeys(f, &app, layout.right_hotkeys);
+            }
 
             // 5. Active Modals (Overlay)
             render_modals(f, &app, f.area());

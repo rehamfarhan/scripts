@@ -101,15 +101,15 @@ fn render_rate_modal(f: &mut Frame, selected: usize, area: Rect) {
     let options = [
         "🌟🌟🌟🌟🌟  10/10  (Masterpiece)",
         "🌟🌟🌟🌟⭐️  9/10   (Exceptional)",
-        "🌟🌟🌟🌟⚫  8/10   (Great)",
-        "🌟🌟🌟⭐️⚫  7/10   (Very Good)",
-        "🌟🌟🌟⚫⚫  6/10   (Good)",
-        "🌟🌟⭐️⚫⚫  5/10   (Decent)",
-        "🌟🌟⚫⚫⚫  4/10   (Mediocre)",
-        "🌟⭐️⚫⚫⚫  3/10   (Poor)",
-        "🌟⚫⚫⚫⚫  2/10   (Bad)",
-        "⭐️⚫⚫⚫⚫  1/10   (Terrible)",
-        "⚫⚫⚫⚫⚫  0/10   (Unrated)",
+        "🌟🌟🌟🌟⬛  8/10   (Great)",
+        "🌟🌟🌟⭐️⬛  7/10   (Very Good)",
+        "🌟🌟🌟⬛⬛  6/10   (Good)",
+        "🌟🌟⭐️⬛⬛  5/10   (Decent)",
+        "🌟🌟⬛⬛⬛  4/10   (Mediocre)",
+        "🌟⭐️⬛⬛⬛  3/10   (Poor)",
+        "🌟⬛⬛⬛⬛  2/10   (Bad)",
+        "⭐️⬛⬛⬛⬛  1/10   (Terrible)",
+        "⬛⬛⬛⬛⬛  0/10   (Unrated)",
     ];
 
     let items: Vec<ListItem> = options

@@ -224,7 +224,7 @@ pub fn format_relative_time(iso_str: Option<&str>) -> String {
 pub fn format_star_rating(rating: u8) -> String {
     let r = rating.min(10);
     if r == 0 {
-        return "⚫⚫⚫⚫⚫  (0/10 • Unrated)".to_string();
+        return "⬛⬛⬛⬛⬛  (0/10 • Unrated)".to_string();
     }
 
     let mut slots = String::new();
@@ -235,7 +235,7 @@ pub fn format_star_rating(rating: u8) -> String {
         } else if r == threshold - 1 {
             slots.push_str("⭐️");
         } else {
-            slots.push_str("⚫");
+            slots.push_str("⬛");
         }
     }
 

@@ -102,6 +102,7 @@ pub struct App {
     pub toast: Option<(String, Instant)>,
     pub should_quit: bool,
     pub launch_target: Option<GameRecord>,
+    pub show_quick_actions: bool,
     pub needs_editor: Option<PathBuf>,
     matcher: SkimMatcherV2,
 }
@@ -117,7 +118,8 @@ impl App {
             filtered_indices: Vec::new(),
             selected_index: 0,
             search_query: String::new(),
-            is_searching: false,
+            is_searching: true, // Starts in fuzzy search mode by default!
+            show_quick_actions: false, // Hidden by default, toggled with 'i'
             sort_mode: SortMode::Recent,
             active_modal: ActiveModal::None,
             toast: None,

@@ -19,8 +19,24 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     // 2. Handle Search Bar Input Mode
     if app.is_searching {
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => {
-                app.is_searching = false;
+            KeyCode::Esc => {
+                if !app.search_query.is_empty() {
+                    app.search_query.clear();
+                    app.apply_filter();
+                } else {
+                    app.is_searching = false;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(game) = app.selected_game().cloned() {
+                    app.launch_target = Some(game);
+                }
+            }
+            KeyCode::Up => {
+                app.select_prev();
+            }
+            KeyCode::Down => {
+                app.select_next();
             }
             KeyCode::Backspace => {
                 app.search_query.pop();
@@ -42,6 +58,9 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('/') => {
             app.is_searching = true;
+        }
+        KeyCode::Char('i') => {
+            app.show_quick_actions = !app.show_quick_actions;
         }
         KeyCode::Up => {
             app.select_prev();
