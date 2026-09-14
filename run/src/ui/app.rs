@@ -236,6 +236,30 @@ impl App {
         }
     }
 
+    pub fn select_first(&mut self) {
+        if !self.filtered_indices.is_empty() {
+            self.selected_index = 0;
+        }
+    }
+
+    pub fn select_last(&mut self) {
+        if !self.filtered_indices.is_empty() {
+            self.selected_index = self.filtered_indices.len().saturating_sub(1);
+        }
+    }
+
+    pub fn scroll_down(&mut self, count: usize) {
+        if !self.filtered_indices.is_empty() {
+            self.selected_index = (self.selected_index + count).min(self.filtered_indices.len() - 1);
+        }
+    }
+
+    pub fn scroll_up(&mut self, count: usize) {
+        if !self.filtered_indices.is_empty() {
+            self.selected_index = self.selected_index.saturating_sub(count);
+        }
+    }
+
     pub fn check_unregistered_folders(&mut self) {
         let existing_dirs: std::collections::HashSet<String> = self
             .db

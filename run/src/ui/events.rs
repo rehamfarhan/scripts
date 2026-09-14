@@ -18,6 +18,39 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
 
     // 2. Handle Search Bar Input Mode
     if app.is_searching {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Char('n') => {
+                    app.select_next();
+                    return;
+                }
+                KeyCode::Char('k') | KeyCode::Char('p') => {
+                    app.select_prev();
+                    return;
+                }
+                KeyCode::Char('d') => {
+                    app.scroll_down(8);
+                    return;
+                }
+                KeyCode::Char('u') => {
+                    app.search_query.clear();
+                    app.apply_filter();
+                    return;
+                }
+                KeyCode::Char('w') => {
+                    let trimmed = app.search_query.trim_end();
+                    if let Some(idx) = trimmed.rfind(' ') {
+                        app.search_query.truncate(idx + 1);
+                    } else {
+                        app.search_query.clear();
+                    }
+                    app.apply_filter();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         match key.code {
             KeyCode::Esc => {
                 app.is_searching = false;
@@ -33,6 +66,18 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             KeyCode::Down => {
                 app.select_next();
             }
+            KeyCode::PageUp => {
+                app.scroll_up(8);
+            }
+            KeyCode::PageDown => {
+                app.scroll_down(8);
+            }
+            KeyCode::Home => {
+                app.select_first();
+            }
+            KeyCode::End => {
+                app.select_last();
+            }
             KeyCode::Backspace => {
                 app.search_query.pop();
                 app.apply_filter();
@@ -47,6 +92,28 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     }
 
     // 3. Main Dashboard Navigation & Hotkeys
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('d') => {
+                app.scroll_down(8);
+                return;
+            }
+            KeyCode::Char('u') => {
+                app.scroll_up(8);
+                return;
+            }
+            KeyCode::Char('j') | KeyCode::Char('n') => {
+                app.select_next();
+                return;
+            }
+            KeyCode::Char('k') | KeyCode::Char('p') => {
+                app.select_prev();
+                return;
+            }
+            _ => {}
+        }
+    }
+
     match key.code {
         KeyCode::Char('q') => {
             app.should_quit = true;
@@ -65,11 +132,24 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         KeyCode::Char('i') => {
             app.show_quick_actions = !app.show_quick_actions;
         }
-        KeyCode::Up => {
+        // Vim Navigation
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
             app.select_prev();
         }
-        KeyCode::Down => {
-            app.select_next();
+        KeyCode::Char('g') | KeyCode::Home => {
+            app.select_first();
+        }
+        KeyCode::Char('G') | KeyCode::End => {
+            app.select_last();
+        }
+        KeyCode::PageDown => {
+            app.scroll_down(8);
+        }
+        KeyCode::PageUp => {
+            app.scroll_up(8);
         }
         KeyCode::Enter => {
             if let Some(game) = app.selected_game().cloned() {
@@ -118,7 +198,8 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 };
             }
         }
-        KeyCode::Char('k') => {
+        // Keyboard Patch (keyd) remapped to 'p' / 'P' to free 'k' for Vim Up
+        KeyCode::Char('p') | KeyCode::Char('P') => {
             if let Some(game) = app.selected_game() {
                 let current_remap = game
                     .wine_opts
@@ -256,8 +337,8 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
     let modal = std::mem::replace(&mut app.active_modal, ActiveModal::None);
     let next_modal = match modal {
         ActiveModal::RateGame { mut selected_opt } => match key.code {
-            KeyCode::Esc => ActiveModal::None,
-            KeyCode::Up => {
+            KeyCode::Esc | KeyCode::Char('q') => ActiveModal::None,
+            KeyCode::Char('k') | KeyCode::Up => {
                 if selected_opt > 0 {
                     selected_opt -= 1;
                 } else {
@@ -265,9 +346,15 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                 }
                 ActiveModal::RateGame { selected_opt }
             }
-            KeyCode::Down => {
+            KeyCode::Char('j') | KeyCode::Down => {
                 selected_opt = (selected_opt + 1) % 11;
                 ActiveModal::RateGame { selected_opt }
+            }
+            KeyCode::Char('g') | KeyCode::Home => {
+                ActiveModal::RateGame { selected_opt: 0 }
+            }
+            KeyCode::Char('G') | KeyCode::End => {
+                ActiveModal::RateGame { selected_opt: 10 }
             }
             KeyCode::Enter => {
                 let chosen_rating = (10 - selected_opt.min(10)) as u8;
@@ -328,8 +415,8 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                 }
             } else {
                 match key.code {
-                    KeyCode::Esc => ActiveModal::None,
-                    KeyCode::Up => {
+                    KeyCode::Esc | KeyCode::Char('q') => ActiveModal::None,
+                    KeyCode::Char('k') | KeyCode::Up => {
                         if selected_opt > 0 {
                             selected_opt -= 1;
                         } else {
@@ -341,10 +428,24 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             is_custom_mode,
                         }
                     }
-                    KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down => {
                         selected_opt = (selected_opt + 1) % 3;
                         ActiveModal::KeyboardPatch {
                             selected_opt,
+                            custom_input,
+                            is_custom_mode,
+                        }
+                    }
+                    KeyCode::Char('g') | KeyCode::Home => {
+                        ActiveModal::KeyboardPatch {
+                            selected_opt: 0,
+                            custom_input,
+                            is_custom_mode,
+                        }
+                    }
+                    KeyCode::Char('G') | KeyCode::End => {
+                        ActiveModal::KeyboardPatch {
+                            selected_opt: 2,
                             custom_input,
                             is_custom_mode,
                         }
@@ -383,8 +484,8 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
         } => {
             if !is_windows {
                 match key.code {
-                    KeyCode::Esc => ActiveModal::None,
-                    KeyCode::Up => {
+                    KeyCode::Esc | KeyCode::Char('q') => ActiveModal::None,
+                    KeyCode::Char('k') | KeyCode::Up => {
                         if selected_opt > 0 {
                             selected_opt -= 1;
                         } else {
@@ -396,7 +497,7 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             opts,
                         }
                     }
-                    KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down => {
                         selected_opt = (selected_opt + 1) % 3;
                         ActiveModal::ExecutionSettings {
                             selected_opt,
@@ -404,7 +505,21 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             opts,
                         }
                     }
-                    KeyCode::Enter => {
+                    KeyCode::Char('g') | KeyCode::Home => {
+                        ActiveModal::ExecutionSettings {
+                            selected_opt: 0,
+                            is_windows,
+                            opts,
+                        }
+                    }
+                    KeyCode::Char('G') | KeyCode::End => {
+                        ActiveModal::ExecutionSettings {
+                            selected_opt: 2,
+                            is_windows,
+                            opts,
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('l') => {
                         match selected_opt {
                             0 => opts.sdl_driver = None,
                             1 => opts.sdl_driver = Some("x11".to_string()),
@@ -438,8 +553,8 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                 }
             } else {
                 match key.code {
-                    KeyCode::Esc => ActiveModal::None,
-                    KeyCode::Up => {
+                    KeyCode::Esc | KeyCode::Char('q') => ActiveModal::None,
+                    KeyCode::Char('k') | KeyCode::Up => {
                         if selected_opt > 0 {
                             selected_opt -= 1;
                         } else {
@@ -451,7 +566,7 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             opts,
                         }
                     }
-                    KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down => {
                         selected_opt = (selected_opt + 1) % 7;
                         ActiveModal::ExecutionSettings {
                             selected_opt,
@@ -459,7 +574,21 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             opts,
                         }
                     }
-                    KeyCode::Enter => {
+                    KeyCode::Char('g') | KeyCode::Home => {
+                        ActiveModal::ExecutionSettings {
+                            selected_opt: 0,
+                            is_windows,
+                            opts,
+                        }
+                    }
+                    KeyCode::Char('G') | KeyCode::End => {
+                        ActiveModal::ExecutionSettings {
+                            selected_opt: 6,
+                            is_windows,
+                            opts,
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('l') => {
                         match selected_opt {
                             0 => opts.resolution = None,
                             1 => opts.resolution = Some("1920x1080".to_string()),
@@ -514,7 +643,50 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                 .map(|g| app.games_root.join(&g.dir))
                 .unwrap_or_else(|| app.games_root.clone());
 
-            match key.code {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                match key.code {
+                    KeyCode::Char('j') | KeyCode::Char('n') => {
+                        if !filtered_indices.is_empty() {
+                            selected_bin = (selected_bin + 1) % filtered_indices.len();
+                        }
+                    }
+                    KeyCode::Char('k') | KeyCode::Char('p') => {
+                        if selected_bin > 0 {
+                            selected_bin -= 1;
+                        } else if !filtered_indices.is_empty() {
+                            selected_bin = filtered_indices.len() - 1;
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        if !filtered_indices.is_empty() {
+                            selected_bin = (selected_bin + 8).min(filtered_indices.len() - 1);
+                        }
+                    }
+                    KeyCode::Char('u') => {
+                        search_query.clear();
+                        filtered_indices = filter_binary_indices(&binaries, &game_dir, &search_query);
+                        selected_bin = 0;
+                    }
+                    KeyCode::Char('w') => {
+                        let trimmed = search_query.trim_end();
+                        if let Some(idx) = trimmed.rfind(' ') {
+                            search_query.truncate(idx + 1);
+                        } else {
+                            search_query.clear();
+                        }
+                        filtered_indices = filter_binary_indices(&binaries, &game_dir, &search_query);
+                        selected_bin = 0;
+                    }
+                    _ => {}
+                }
+                ActiveModal::ChangeBinary {
+                    binaries,
+                    filtered_indices,
+                    selected_bin,
+                    search_query,
+                }
+            } else {
+                match key.code {
                 KeyCode::Esc => ActiveModal::None,
                 KeyCode::Up => {
                     if selected_bin > 0 {
@@ -537,6 +709,43 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                         binaries,
                         filtered_indices,
                         selected_bin,
+                        search_query,
+                    }
+                }
+                KeyCode::PageUp => {
+                    selected_bin = selected_bin.saturating_sub(8);
+                    ActiveModal::ChangeBinary {
+                        binaries,
+                        filtered_indices,
+                        selected_bin,
+                        search_query,
+                    }
+                }
+                KeyCode::PageDown => {
+                    if !filtered_indices.is_empty() {
+                        selected_bin = (selected_bin + 8).min(filtered_indices.len() - 1);
+                    }
+                    ActiveModal::ChangeBinary {
+                        binaries,
+                        filtered_indices,
+                        selected_bin,
+                        search_query,
+                    }
+                }
+                KeyCode::Home => {
+                    ActiveModal::ChangeBinary {
+                        binaries,
+                        filtered_indices,
+                        selected_bin: 0,
+                        search_query,
+                    }
+                }
+                KeyCode::End => {
+                    let last = filtered_indices.len().saturating_sub(1);
+                    ActiveModal::ChangeBinary {
+                        binaries,
+                        filtered_indices,
+                        selected_bin: last,
                         search_query,
                     }
                 }
@@ -601,6 +810,7 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                     selected_bin,
                     search_query,
                 },
+                }
             }
         }
         ActiveModal::RenameGame { mut input } => match key.code {
@@ -654,132 +864,56 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                 .to_string();
 
             if is_searching {
-                match key.code {
-                    // Esc switches to selection mode where s/i/arrows work!
-                    KeyCode::Esc => {
-                        is_searching = false;
-                        ActiveModal::NewGameWizard {
-                            folders,
-                            current_idx,
-                            binaries,
-                            filtered_indices,
-                            selected_bin,
-                            search_query,
-                            is_searching,
-                        }
-                    }
-                    KeyCode::Up => {
-                        if selected_bin > 0 {
-                            selected_bin -= 1;
-                        } else if !filtered_indices.is_empty() {
-                            selected_bin = filtered_indices.len() - 1;
-                        }
-                        ActiveModal::NewGameWizard {
-                            folders,
-                            current_idx,
-                            binaries,
-                            filtered_indices,
-                            selected_bin,
-                            search_query,
-                            is_searching,
-                        }
-                    }
-                    KeyCode::Down => {
-                        if !filtered_indices.is_empty() {
-                            selected_bin = (selected_bin + 1) % filtered_indices.len();
-                        }
-                        ActiveModal::NewGameWizard {
-                            folders,
-                            current_idx,
-                            binaries,
-                            filtered_indices,
-                            selected_bin,
-                            search_query,
-                            is_searching,
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        search_query.pop();
-                        filtered_indices = filter_binary_indices(&binaries, &current_folder, &search_query);
-                        selected_bin = 0;
-                        ActiveModal::NewGameWizard {
-                            folders,
-                            current_idx,
-                            binaries,
-                            filtered_indices,
-                            selected_bin,
-                            search_query,
-                            is_searching,
-                        }
-                    }
-                    KeyCode::Char(c) => {
-                        search_query.push(c);
-                        filtered_indices = filter_binary_indices(&binaries, &current_folder, &search_query);
-                        selected_bin = 0;
-                        ActiveModal::NewGameWizard {
-                            folders,
-                            current_idx,
-                            binaries,
-                            filtered_indices,
-                            selected_bin,
-                            search_query,
-                            is_searching,
-                        }
-                    }
-                    KeyCode::Enter => {
-                        if let Some(&bin_idx) = filtered_indices.get(selected_bin) {
-                            if let Some(chosen) = binaries.get(bin_idx).cloned() {
-                                let rel = chosen.strip_prefix(&current_folder).unwrap_or(&chosen);
-                                let is_windows = rel
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .map(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("bat"))
-                                    .unwrap_or(false);
-
-                                let display_name = folder_name.replace(['_', '-'], " ");
-                                let default_opts = WineOpts::default();
-
-                                let _ = create_launcher_script(
-                                    &current_folder,
-                                    rel,
-                                    &display_name,
-                                    is_windows,
-                                    None,
-                                    Some(&default_opts),
-                                );
-
-                                let record = GameRecord {
-                                    dir: folder_name.clone(),
-                                    display_name: display_name.clone(),
-                                    binary: rel.to_string_lossy().to_string(),
-                                    is_windows,
-                                    wine_prefix: None,
-                                    wine_opts: Some(default_opts),
-                                    icon: Some(if is_windows { "💻".to_string() } else { "🐧".to_string() }),
-                                    launcher_script: Some("start_game.sh".to_string()),
-                                    desktop_entry: None,
-                                    ignored: false,
-                                    custom_wrapper: false,
-                                    favorite: false,
-                                    rating: 0,
-                                    playtime_seconds: 0,
-                                    play_count: 0,
-                                    last_played: None,
-                                };
-
-                                let _ = app.db.upsert_game(&record);
-                                app.set_toast(format!("✓ Added '{}' ({})", display_name, rel.display()));
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    match key.code {
+                        KeyCode::Char('j') | KeyCode::Char('n') => {
+                            if !filtered_indices.is_empty() {
+                                selected_bin = (selected_bin + 1) % filtered_indices.len();
                             }
                         }
-
-                        if current_idx + 1 < folders.len() {
-                            current_idx += 1;
-                            let next_folder = &folders[current_idx];
-                            binaries = scan_executables(next_folder, 2);
-                            filtered_indices = (0..binaries.len()).collect();
-                            selected_bin = 0;
+                        KeyCode::Char('k') | KeyCode::Char('p') => {
+                            if selected_bin > 0 {
+                                selected_bin -= 1;
+                            } else if !filtered_indices.is_empty() {
+                                selected_bin = filtered_indices.len() - 1;
+                            }
+                        }
+                        KeyCode::Char('d') => {
+                            if !filtered_indices.is_empty() {
+                                selected_bin = (selected_bin + 8).min(filtered_indices.len() - 1);
+                            }
+                        }
+                        KeyCode::Char('u') => {
                             search_query.clear();
-                            is_searching = true;
+                            filtered_indices = filter_binary_indices(&binaries, &current_folder, &search_query);
+                            selected_bin = 0;
+                        }
+                        KeyCode::Char('w') => {
+                            let trimmed = search_query.trim_end();
+                            if let Some(idx) = trimmed.rfind(' ') {
+                                search_query.truncate(idx + 1);
+                            } else {
+                                search_query.clear();
+                            }
+                            filtered_indices = filter_binary_indices(&binaries, &current_folder, &search_query);
+                            selected_bin = 0;
+                        }
+                        _ => {}
+                    }
+                    ActiveModal::NewGameWizard {
+                        folders,
+                        current_idx,
+                        binaries,
+                        filtered_indices,
+                        selected_bin,
+                        search_query,
+                        is_searching,
+                    }
+                } else {
+                    match key.code {
+                        // Esc switches to selection mode where s/i/arrows/j/k work!
+                        KeyCode::Esc => {
+                            is_searching = false;
                             ActiveModal::NewGameWizard {
                                 folders,
                                 current_idx,
@@ -789,202 +923,185 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                                 search_query,
                                 is_searching,
                             }
-                        } else {
-                            app.reload_games();
-                            ActiveModal::None
                         }
+                        KeyCode::Up => {
+                            if selected_bin > 0 {
+                                selected_bin -= 1;
+                            } else if !filtered_indices.is_empty() {
+                                selected_bin = filtered_indices.len() - 1;
+                            }
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Down => {
+                            if !filtered_indices.is_empty() {
+                                selected_bin = (selected_bin + 1) % filtered_indices.len();
+                            }
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            selected_bin = selected_bin.saturating_sub(8);
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if !filtered_indices.is_empty() {
+                                selected_bin = (selected_bin + 8).min(filtered_indices.len() - 1);
+                            }
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            search_query.pop();
+                            filtered_indices = filter_binary_indices(&binaries, &current_folder, &search_query);
+                            selected_bin = 0;
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            search_query.push(c);
+                            filtered_indices = filter_binary_indices(&binaries, &current_folder, &search_query);
+                            selected_bin = 0;
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if let Some(&bin_idx) = filtered_indices.get(selected_bin) {
+                                if let Some(chosen) = binaries.get(bin_idx).cloned() {
+                                    let rel = chosen.strip_prefix(&current_folder).unwrap_or(&chosen);
+                                    let is_windows = rel
+                                        .extension()
+                                        .and_then(|e| e.to_str())
+                                        .map(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("bat"))
+                                        .unwrap_or(false);
+
+                                    let display_name = folder_name.replace(['_', '-'], " ");
+                                    let default_opts = WineOpts::default();
+
+                                    let _ = create_launcher_script(
+                                        &current_folder,
+                                        rel,
+                                        &display_name,
+                                        is_windows,
+                                        None,
+                                        Some(&default_opts),
+                                    );
+
+                                    let record = GameRecord {
+                                        dir: folder_name.clone(),
+                                        display_name: display_name.clone(),
+                                        binary: rel.to_string_lossy().to_string(),
+                                        is_windows,
+                                        wine_prefix: None,
+                                        wine_opts: Some(default_opts),
+                                        icon: Some(if is_windows { "💻".to_string() } else { "🐧".to_string() }),
+                                        launcher_script: Some("start_game.sh".to_string()),
+                                        desktop_entry: None,
+                                        ignored: false,
+                                        custom_wrapper: false,
+                                        favorite: false,
+                                        rating: 0,
+                                        playtime_seconds: 0,
+                                        play_count: 0,
+                                        last_played: None,
+                                    };
+
+                                    let _ = app.db.upsert_game(&record);
+                                    app.set_toast(format!("✓ Added '{}' ({})", display_name, rel.display()));
+                                }
+                            }
+
+                            if current_idx + 1 < folders.len() {
+                                current_idx += 1;
+                                let next_folder = &folders[current_idx];
+                                binaries = scan_executables(next_folder, 2);
+                                filtered_indices = (0..binaries.len()).collect();
+                                selected_bin = 0;
+                                search_query.clear();
+                                is_searching = true;
+                                ActiveModal::NewGameWizard {
+                                    folders,
+                                    current_idx,
+                                    binaries,
+                                    filtered_indices,
+                                    selected_bin,
+                                    search_query,
+                                    is_searching,
+                                }
+                            } else {
+                                app.reload_games();
+                                ActiveModal::None
+                            }
+                        }
+                        _ => ActiveModal::NewGameWizard {
+                            folders,
+                            current_idx,
+                            binaries,
+                            filtered_indices,
+                            selected_bin,
+                            search_query,
+                            is_searching,
+                        },
                     }
-                    _ => ActiveModal::NewGameWizard {
-                        folders,
-                        current_idx,
-                        binaries,
-                        filtered_indices,
-                        selected_bin,
-                        search_query,
-                        is_searching,
-                    },
                 }
             } else {
-                // Selection Mode: s = skip, i = ignore, / = search mode
-                match key.code {
-                    KeyCode::Char('/') => {
-                        is_searching = true;
-                        ActiveModal::NewGameWizard {
-                            folders,
-                            current_idx,
-                            binaries,
-                            filtered_indices,
-                            selected_bin,
-                            search_query,
-                            is_searching,
-                        }
-                    }
-                    KeyCode::Esc | KeyCode::Char('s') => {
-                        if current_idx + 1 < folders.len() {
-                            current_idx += 1;
-                            let next_folder = &folders[current_idx];
-                            binaries = scan_executables(next_folder, 2);
-                            filtered_indices = (0..binaries.len()).collect();
-                            selected_bin = 0;
-                            search_query.clear();
-                            is_searching = true;
-                            ActiveModal::NewGameWizard {
-                                folders,
-                                current_idx,
-                                binaries,
-                                filtered_indices,
-                                selected_bin,
-                                search_query,
-                                is_searching,
-                            }
-                        } else {
-                            app.reload_games();
-                            ActiveModal::None
-                        }
-                    }
-                    KeyCode::Char('i') => {
-                        let record = GameRecord {
-                            dir: folder_name.clone(),
-                            display_name: folder_name.replace(['_', '-'], " "),
-                            binary: String::new(),
-                            is_windows: false,
-                            wine_prefix: None,
-                            wine_opts: None,
-                            icon: None,
-                            launcher_script: None,
-                            desktop_entry: None,
-                            ignored: true,
-                            custom_wrapper: false,
-                            favorite: false,
-                            rating: 0,
-                            playtime_seconds: 0,
-                            play_count: 0,
-                            last_played: None,
-                        };
-                        let _ = app.db.upsert_game(&record);
-                        app.set_toast(format!("🚫 Ignored folder '{}'", folder_name));
-
-                        if current_idx + 1 < folders.len() {
-                            current_idx += 1;
-                            let next_folder = &folders[current_idx];
-                            binaries = scan_executables(next_folder, 2);
-                            filtered_indices = (0..binaries.len()).collect();
-                            selected_bin = 0;
-                            search_query.clear();
-                            is_searching = true;
-                            ActiveModal::NewGameWizard {
-                                folders,
-                                current_idx,
-                                binaries,
-                                filtered_indices,
-                                selected_bin,
-                                search_query,
-                                is_searching,
-                            }
-                        } else {
-                            app.reload_games();
-                            ActiveModal::None
-                        }
-                    }
-                    KeyCode::Up => {
-                        if selected_bin > 0 {
-                            selected_bin -= 1;
-                        } else if !filtered_indices.is_empty() {
-                            selected_bin = filtered_indices.len() - 1;
-                        }
-                        ActiveModal::NewGameWizard {
-                            folders,
-                            current_idx,
-                            binaries,
-                            filtered_indices,
-                            selected_bin,
-                            search_query,
-                            is_searching,
-                        }
-                    }
-                    KeyCode::Down => {
-                        if !filtered_indices.is_empty() {
-                            selected_bin = (selected_bin + 1) % filtered_indices.len();
-                        }
-                        ActiveModal::NewGameWizard {
-                            folders,
-                            current_idx,
-                            binaries,
-                            filtered_indices,
-                            selected_bin,
-                            search_query,
-                            is_searching,
-                        }
-                    }
-                    KeyCode::Enter => {
-                        if let Some(&bin_idx) = filtered_indices.get(selected_bin) {
-                            if let Some(chosen) = binaries.get(bin_idx).cloned() {
-                                let rel = chosen.strip_prefix(&current_folder).unwrap_or(&chosen);
-                                let is_windows = rel
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .map(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("bat"))
-                                    .unwrap_or(false);
-
-                                let display_name = folder_name.replace(['_', '-'], " ");
-                                let default_opts = WineOpts::default();
-
-                                let _ = create_launcher_script(
-                                    &current_folder,
-                                    rel,
-                                    &display_name,
-                                    is_windows,
-                                    None,
-                                    Some(&default_opts),
-                                );
-
-                                let record = GameRecord {
-                                    dir: folder_name.clone(),
-                                    display_name: display_name.clone(),
-                                    binary: rel.to_string_lossy().to_string(),
-                                    is_windows,
-                                    wine_prefix: None,
-                                    wine_opts: Some(default_opts),
-                                    icon: Some(if is_windows { "💻".to_string() } else { "🐧".to_string() }),
-                                    launcher_script: Some("start_game.sh".to_string()),
-                                    desktop_entry: None,
-                                    ignored: false,
-                                    custom_wrapper: false,
-                                    favorite: false,
-                                    rating: 0,
-                                    playtime_seconds: 0,
-                                    play_count: 0,
-                                    last_played: None,
-                                };
-
-                                let _ = app.db.upsert_game(&record);
-                                app.set_toast(format!("✓ Added '{}' ({})", display_name, rel.display()));
+                // Selection Mode: j/k = navigate, g/G = top/bottom, s = skip, i = ignore, / = search mode
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    match key.code {
+                        KeyCode::Char('d') => {
+                            if !filtered_indices.is_empty() {
+                                selected_bin = (selected_bin + 8).min(filtered_indices.len() - 1);
                             }
                         }
-
-                        if current_idx + 1 < folders.len() {
-                            current_idx += 1;
-                            let next_folder = &folders[current_idx];
-                            binaries = scan_executables(next_folder, 2);
-                            filtered_indices = (0..binaries.len()).collect();
-                            selected_bin = 0;
-                            search_query.clear();
-                            is_searching = true;
-                            ActiveModal::NewGameWizard {
-                                folders,
-                                current_idx,
-                                binaries,
-                                filtered_indices,
-                                selected_bin,
-                                search_query,
-                                is_searching,
-                            }
-                        } else {
-                            app.reload_games();
-                            ActiveModal::None
+                        KeyCode::Char('u') => {
+                            selected_bin = selected_bin.saturating_sub(8);
                         }
+                        _ => {}
                     }
-                    _ => ActiveModal::NewGameWizard {
+                    ActiveModal::NewGameWizard {
                         folders,
                         current_idx,
                         binaries,
@@ -992,7 +1109,200 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                         selected_bin,
                         search_query,
                         is_searching,
-                    },
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Char('/') => {
+                            is_searching = true;
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Char('s') => {
+                            if current_idx + 1 < folders.len() {
+                                current_idx += 1;
+                                let next_folder = &folders[current_idx];
+                                binaries = scan_executables(next_folder, 2);
+                                filtered_indices = (0..binaries.len()).collect();
+                                selected_bin = 0;
+                                search_query.clear();
+                                is_searching = true;
+                                ActiveModal::NewGameWizard {
+                                    folders,
+                                    current_idx,
+                                    binaries,
+                                    filtered_indices,
+                                    selected_bin,
+                                    search_query,
+                                    is_searching,
+                                }
+                            } else {
+                                app.reload_games();
+                                ActiveModal::None
+                            }
+                        }
+                        KeyCode::Char('i') => {
+                            let record = GameRecord {
+                                dir: folder_name.clone(),
+                                display_name: folder_name.replace(['_', '-'], " "),
+                                binary: String::new(),
+                                is_windows: false,
+                                wine_prefix: None,
+                                wine_opts: None,
+                                icon: None,
+                                launcher_script: None,
+                                desktop_entry: None,
+                                ignored: true,
+                                custom_wrapper: false,
+                                favorite: false,
+                                rating: 0,
+                                playtime_seconds: 0,
+                                play_count: 0,
+                                last_played: None,
+                            };
+                            let _ = app.db.upsert_game(&record);
+                            app.set_toast(format!("🚫 Ignored folder '{}'", folder_name));
+
+                            if current_idx + 1 < folders.len() {
+                                current_idx += 1;
+                                let next_folder = &folders[current_idx];
+                                binaries = scan_executables(next_folder, 2);
+                                filtered_indices = (0..binaries.len()).collect();
+                                selected_bin = 0;
+                                search_query.clear();
+                                is_searching = true;
+                                ActiveModal::NewGameWizard {
+                                    folders,
+                                    current_idx,
+                                    binaries,
+                                    filtered_indices,
+                                    selected_bin,
+                                    search_query,
+                                    is_searching,
+                                }
+                            } else {
+                                app.reload_games();
+                                ActiveModal::None
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if selected_bin > 0 {
+                                selected_bin -= 1;
+                            } else if !filtered_indices.is_empty() {
+                                selected_bin = filtered_indices.len() - 1;
+                            }
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if !filtered_indices.is_empty() {
+                                selected_bin = (selected_bin + 1) % filtered_indices.len();
+                            }
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Char('g') | KeyCode::Home => {
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin: 0,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Char('G') | KeyCode::End => {
+                            let last = filtered_indices.len().saturating_sub(1);
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin: last,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            selected_bin = selected_bin.saturating_sub(8);
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if !filtered_indices.is_empty() {
+                                selected_bin = (selected_bin + 8).min(filtered_indices.len() - 1);
+                            }
+                            ActiveModal::NewGameWizard {
+                                folders,
+                                current_idx,
+                                binaries,
+                                filtered_indices,
+                                selected_bin,
+                                search_query,
+                                is_searching,
+                            }
+                        }
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            if current_idx + 1 < folders.len() {
+                                current_idx += 1;
+                                let next_folder = &folders[current_idx];
+                                binaries = scan_executables(next_folder, 2);
+                                filtered_indices = (0..binaries.len()).collect();
+                                selected_bin = 0;
+                                search_query.clear();
+                                is_searching = true;
+                                ActiveModal::NewGameWizard {
+                                    folders,
+                                    current_idx,
+                                    binaries,
+                                    filtered_indices,
+                                    selected_bin,
+                                    search_query,
+                                    is_searching,
+                                }
+                            } else {
+                                app.reload_games();
+                                ActiveModal::None
+                            }
+                        }
+                        _ => ActiveModal::NewGameWizard {
+                            folders,
+                            current_idx,
+                            binaries,
+                            filtered_indices,
+                            selected_bin,
+                            search_query,
+                            is_searching,
+                        },
+                    }
                 }
             }
         }
