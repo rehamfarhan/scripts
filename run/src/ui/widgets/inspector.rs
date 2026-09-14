@@ -28,11 +28,10 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    let game_stats = app.stats.get_stat(&game.dir);
-    let rating = game_stats.map(|s| s.rating).unwrap_or(0);
-    let playtime = game_stats.map(|s| s.playtime_seconds).unwrap_or(0);
-    let play_count = game_stats.map(|s| s.play_count).unwrap_or(0);
-    let last_played_iso = game_stats.and_then(|s| s.last_played.as_deref());
+    let rating = game.rating;
+    let playtime = game.playtime_seconds;
+    let play_count = game.play_count;
+    let last_played_iso = game.last_played.as_deref();
 
     let folder_path = app.games_root.join(&game.dir);
     let bin_path = folder_path.join(&game.binary);
@@ -41,7 +40,7 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
         .map(|m| format_file_size(m.len()))
         .unwrap_or_else(|_| "Unknown".to_string());
 
-    let is_custom = game.custom_wrapper.unwrap_or(false) || {
+    let is_custom = game.custom_wrapper || {
         let script_file = folder_path.join("start_game.sh");
         if script_file.is_file() {
             fs::read_to_string(&script_file)
@@ -113,6 +112,16 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
                 )
             } else {
                 Span::styled("● READY ", Style::default().fg(COLOR_GREEN))
+            },
+            if game.favorite {
+                Span::styled(
+                    "⭐ FAVORITE ",
+                    Style::default()
+                        .fg(COLOR_YELLOW)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::raw("")
             },
         ]),
         Line::from(""),

@@ -77,6 +77,7 @@ pub fn render_modals(f: &mut Frame, app: &App, area: Rect) {
             filtered_indices,
             selected_bin,
             search_query,
+            is_searching,
         } => {
             render_wizard_modal(
                 f,
@@ -86,6 +87,7 @@ pub fn render_modals(f: &mut Frame, app: &App, area: Rect) {
                 filtered_indices,
                 *selected_bin,
                 search_query,
+                *is_searching,
                 area,
             );
         }
@@ -93,16 +95,21 @@ pub fn render_modals(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_rate_modal(f: &mut Frame, selected: usize, area: Rect) {
-    let popup_area = centered_rect(50, 40, area);
+    let popup_area = centered_rect(56, 52, area);
     f.render_widget(Clear, popup_area);
 
     let options = [
-        "⭐⭐⭐⭐⭐  5/5 (Masterpiece)",
-        "⭐⭐⭐⭐  4/5 (Great)",
-        "⭐⭐⭐  3/5 (Good)",
-        "⭐⭐  2/5 (Mediocre)",
-        "⭐  1/5 (Bad)",
-        "Unrated (0/5)",
+        "🌟🌟🌟🌟🌟  10/10  (Masterpiece)",
+        "🌟🌟🌟🌟⭐️  9/10   (Exceptional)",
+        "🌟🌟🌟🌟⚫  8/10   (Great)",
+        "🌟🌟🌟⭐️⚫  7/10   (Very Good)",
+        "🌟🌟🌟⚫⚫  6/10   (Good)",
+        "🌟🌟⭐️⚫⚫  5/10   (Decent)",
+        "🌟🌟⚫⚫⚫  4/10   (Mediocre)",
+        "🌟⭐️⚫⚫⚫  3/10   (Poor)",
+        "🌟⚫⚫⚫⚫  2/10   (Bad)",
+        "⭐️⚫⚫⚫⚫  1/10   (Terrible)",
+        "⚫⚫⚫⚫⚫  0/10   (Unrated)",
     ];
 
     let items: Vec<ListItem> = options
@@ -129,7 +136,7 @@ fn render_rate_modal(f: &mut Frame, selected: usize, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BORDER_TYPE)
         .border_style(style_border_active())
-        .title(" ⭐ Rate Game [Use ↑/↓, Enter to Save, Esc to Cancel] ")
+        .title(" ⭐ Rate Game [Use ↑/↓, Enter: Save, Esc: Cancel] ")
         .style(Style::default().bg(COLOR_BG_POPUP));
 
     let list = List::new(items).block(block);
@@ -432,6 +439,7 @@ fn render_wizard_modal(
     filtered_indices: &[usize],
     selected_bin: usize,
     search_query: &str,
+    is_searching: bool,
     area: Rect,
 ) {
     let popup_area = centered_rect(80, 70, area);
@@ -449,19 +457,25 @@ fn render_wizard_modal(
     // Search bar
     let search_content = Line::from(vec![
         Span::styled("🔍 ", Style::default().fg(COLOR_YELLOW)),
-        if search_query.is_empty() {
+        if search_query.is_empty() && !is_searching {
+            Span::styled("Press / to filter binaries...", Style::default().fg(COLOR_DARK_GREY))
+        } else if search_query.is_empty() {
             Span::styled("Type to filter binaries (e.g. x86_64, exe, start)...", Style::default().fg(COLOR_DARK_GREY))
         } else {
             Span::styled(search_query, Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
         },
-        Span::styled("█", Style::default().fg(COLOR_CYAN)),
+        if is_searching {
+            Span::styled("█", Style::default().fg(COLOR_CYAN))
+        } else {
+            Span::raw("")
+        },
     ]);
 
     let search_title = format!(" 📁 New Folder ({}/{}): {} ", current_idx + 1, total_folders, folder_name);
     let search_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BORDER_TYPE)
-        .border_style(style_border_active())
+        .border_style(if is_searching { style_border_active() } else { Style::default().fg(COLOR_DARK_GREY) })
         .title(search_title)
         .style(Style::default().bg(COLOR_BG_POPUP));
 
@@ -519,11 +533,17 @@ fn render_wizard_modal(
         String::new()
     };
 
-    let title = format!(" 🧙 Select Main Binary ({}){} [Enter: Add Game | s: Skip | i: Ignore] ", pos_text, scroll_hint);
+    let footer_hints = if is_searching {
+        "[Enter: Choose | Esc: Selection Mode]"
+    } else {
+        "[Enter: Add Game | s: Skip | i: Ignore | /: Search]"
+    };
+
+    let title = format!(" 🧙 Select Main Binary ({}){} {} ", pos_text, scroll_hint, footer_hints);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BORDER_TYPE)
-        .border_style(style_border_active())
+        .border_style(if !is_searching { style_border_active() } else { Style::default().fg(COLOR_DARK_GREY) })
         .title(title)
         .style(Style::default().bg(COLOR_BG_POPUP));
 

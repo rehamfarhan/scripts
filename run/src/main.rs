@@ -1,4 +1,5 @@
 mod config;
+mod db;
 mod launcher;
 mod model;
 mod recap;
@@ -10,8 +11,8 @@ use fuzzy_matcher::FuzzyMatcher;
 use std::path::PathBuf;
 
 use crate::config::default_games_dir;
+use crate::db::Database;
 use crate::launcher::launch_game_attached;
-use crate::model::GameRegistry;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -40,24 +41,30 @@ fn main() -> std::io::Result<()> {
 
     // Quick-launch mode
     if let Some(ref q) = query {
-        let registry = GameRegistry::load(&games_root);
+        let db = Database::open(&games_root).expect("Failed to open SQLite database");
+        let all_games = db.get_all_games().unwrap_or_default();
         let matcher = SkimMatcherV2::default();
 
         let mut best_match = None;
         let mut highest_score = -1000;
 
-        for game in registry.games.values() {
-            if game.ignored.unwrap_or(false) {
+        for game in all_games {
+            if game.ignored {
                 continue;
             }
 
-            let name_match = matcher.fuzzy_match(&game.display_name, q).unwrap_or(0);
-            let dir_match = matcher.fuzzy_match(&game.dir, q).unwrap_or(0);
-            let score = name_match.max(dir_match);
+            let name_match = matcher.fuzzy_match(&game.display_name, q);
+            let dir_match = matcher.fuzzy_match(&game.dir, q);
+            let score = match (name_match, dir_match) {
+                (Some(s1), Some(s2)) => s1.max(s2),
+                (Some(s1), None) => s1,
+                (None, Some(s2)) => s2,
+                (None, None) => continue,
+            };
 
             if score > highest_score {
                 highest_score = score;
-                best_match = Some(game.clone());
+                best_match = Some(game);
             }
         }
 

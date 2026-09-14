@@ -4,6 +4,7 @@ pub mod layout;
 pub mod theme;
 pub mod widgets;
 
+use crossterm::cursor::Show;
 use crossterm::event::{self, Event};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -41,7 +42,7 @@ pub fn run_tui(games_root: PathBuf) -> io::Result<()> {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
         default_hook(info);
     }));
 
@@ -73,19 +74,32 @@ pub fn run_tui(games_root: PathBuf) -> io::Result<()> {
             render_modals(f, &app, f.area());
         })?;
 
+        // Handle external editor launch cleanly
+        if let Some(script_path) = app.needs_editor.take() {
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nvim".to_string());
+            let _ = disable_raw_mode();
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
+            let _ = std::process::Command::new(&editor).arg(&script_path).status();
+            let _ = execute!(std::io::stdout(), EnterAlternateScreen);
+            let _ = enable_raw_mode();
+            terminal.clear()?;
+            app.set_toast("✓ Wrapper script saved");
+            app.reload_games();
+            continue;
+        }
+
         // Check if a game was requested to launch
         if let Some(game) = app.launch_target.take() {
             // Restore terminal before running game
             let _ = disable_raw_mode();
-            let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
 
             let _ = launch_game_attached(&app.games_root, &game, true);
 
-            // Re-enter TUI
+            // Re-enter TUI and force a full redraw
             let _ = execute!(std::io::stdout(), EnterAlternateScreen);
             let _ = enable_raw_mode();
             terminal.clear()?;
-            app.stats = crate::model::GameStats::load(&app.games_root);
             app.reload_games();
             continue;
         }
@@ -100,7 +114,7 @@ pub fn run_tui(games_root: PathBuf) -> io::Result<()> {
     }
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, Show)?;
     terminal.show_cursor()?;
 
     Ok(())

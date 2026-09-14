@@ -4,14 +4,60 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::config::IGNORE_DIRS;
-use crate::model::{GameEntry, GameRegistry, GameStats, WineOpts};
+use crate::db::{Database, GameRecord};
+use crate::model::WineOpts;
 use crate::scanner::scan_executables;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    Recent,
+    Playtime,
+    Rating,
+    AlphabeticalAsc,
+    AlphabeticalDesc,
+    Sessions,
+}
+
+impl SortMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Recent => Self::Playtime,
+            Self::Playtime => Self::Rating,
+            Self::Rating => Self::AlphabeticalAsc,
+            Self::AlphabeticalAsc => Self::AlphabeticalDesc,
+            Self::AlphabeticalDesc => Self::Sessions,
+            Self::Sessions => Self::Recent,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Recent => Self::Sessions,
+            Self::Playtime => Self::Recent,
+            Self::Rating => Self::Playtime,
+            Self::AlphabeticalAsc => Self::Rating,
+            Self::AlphabeticalDesc => Self::AlphabeticalAsc,
+            Self::Sessions => Self::AlphabeticalDesc,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Recent => "Recent ⏱️",
+            Self::Playtime => "Playtime ⏳",
+            Self::Rating => "Rating 🌟",
+            Self::AlphabeticalAsc => "A-Z 🔤",
+            Self::AlphabeticalDesc => "Z-A 🔤",
+            Self::Sessions => "Sessions 🎮",
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum ActiveModal {
     None,
     RateGame {
-        selected_opt: usize,
+        selected_opt: usize, // 0..=10 (representing ratings 10 down to 0)
     },
     KeyboardPatch {
         selected_opt: usize,
@@ -39,43 +85,45 @@ pub enum ActiveModal {
         filtered_indices: Vec<usize>,
         selected_bin: usize,
         search_query: String,
+        is_searching: bool, // Default true; Esc toggles to selection mode
     },
 }
 
 pub struct App {
     pub games_root: PathBuf,
-    pub registry: GameRegistry,
-    pub stats: GameStats,
-    pub all_games: Vec<GameEntry>,
+    pub db: Database,
+    pub all_games: Vec<GameRecord>,
     pub filtered_indices: Vec<usize>,
     pub selected_index: usize,
     pub search_query: String,
     pub is_searching: bool,
+    pub sort_mode: SortMode,
     pub active_modal: ActiveModal,
     pub toast: Option<(String, Instant)>,
     pub should_quit: bool,
-    pub launch_target: Option<GameEntry>,
+    pub launch_target: Option<GameRecord>,
+    pub needs_editor: Option<PathBuf>,
     matcher: SkimMatcherV2,
 }
 
 impl App {
     pub fn new(games_root: PathBuf) -> Self {
-        let registry = GameRegistry::load(&games_root);
-        let stats = GameStats::load(&games_root);
+        let db = Database::open(&games_root).expect("Failed to open SQLite database");
 
         let mut app = Self {
             games_root,
-            registry,
-            stats,
+            db,
             all_games: Vec::new(),
             filtered_indices: Vec::new(),
             selected_index: 0,
             search_query: String::new(),
             is_searching: false,
+            sort_mode: SortMode::Recent,
             active_modal: ActiveModal::None,
             toast: None,
             should_quit: false,
             launch_target: None,
+            needs_editor: None,
             matcher: SkimMatcherV2::default(),
         };
 
@@ -98,20 +146,45 @@ impl App {
     }
 
     pub fn reload_games(&mut self) {
-        let mut list: Vec<GameEntry> = self
-            .registry
-            .games
-            .values()
-            .filter(|g| !g.ignored.unwrap_or(false))
-            .cloned()
+        let mut list: Vec<GameRecord> = self
+            .db
+            .get_all_games()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|g| !g.ignored)
             .collect();
 
-        // Sort by last played descending (with case-insensitive backwards-compatible stats lookup!)
-        let stats = &self.stats;
+        // Sort based on active sort_mode, with favorites pinned on top
         list.sort_by(|a, b| {
-            let lp_a = stats.get_stat(&a.dir).and_then(|s| s.last_played.as_deref()).unwrap_or("");
-            let lp_b = stats.get_stat(&b.dir).and_then(|s| s.last_played.as_deref()).unwrap_or("");
-            lp_b.cmp(lp_a)
+            if a.favorite != b.favorite {
+                return b.favorite.cmp(&a.favorite);
+            }
+
+            match self.sort_mode {
+                SortMode::Recent => {
+                    let lp_a = a.last_played.as_deref().unwrap_or("");
+                    let lp_b = b.last_played.as_deref().unwrap_or("");
+                    lp_b.cmp(lp_a).then_with(|| a.display_name.cmp(&b.display_name))
+                }
+                SortMode::Playtime => {
+                    b.playtime_seconds.cmp(&a.playtime_seconds)
+                        .then_with(|| a.display_name.cmp(&b.display_name))
+                }
+                SortMode::Rating => {
+                    b.rating.cmp(&a.rating)
+                        .then_with(|| a.display_name.cmp(&b.display_name))
+                }
+                SortMode::AlphabeticalAsc => {
+                    a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+                }
+                SortMode::AlphabeticalDesc => {
+                    b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase())
+                }
+                SortMode::Sessions => {
+                    b.play_count.cmp(&a.play_count)
+                        .then_with(|| a.display_name.cmp(&b.display_name))
+                }
+            }
         });
 
         self.all_games = list;
@@ -126,11 +199,12 @@ impl App {
             for (idx, g) in self.all_games.iter().enumerate() {
                 let text = format!("{} {}", g.display_name, g.dir);
                 if let Some(score) = self.matcher.fuzzy_match(&text, &self.search_query) {
-                    matches.push((idx, score));
+                    matches.push((idx, score, g.favorite));
                 }
             }
-            matches.sort_by(|a, b| b.1.cmp(&a.1));
-            self.filtered_indices = matches.into_iter().map(|(idx, _)| idx).collect();
+            // Favorites pinned, then score descending
+            matches.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| b.1.cmp(&a.1)));
+            self.filtered_indices = matches.into_iter().map(|(idx, _, _)| idx).collect();
         }
 
         if self.selected_index >= self.filtered_indices.len() && !self.filtered_indices.is_empty() {
@@ -138,7 +212,7 @@ impl App {
         }
     }
 
-    pub fn selected_game(&self) -> Option<&GameEntry> {
+    pub fn selected_game(&self) -> Option<&GameRecord> {
         self.filtered_indices
             .get(self.selected_index)
             .and_then(|&idx| self.all_games.get(idx))
@@ -161,6 +235,14 @@ impl App {
     }
 
     pub fn check_unregistered_folders(&mut self) {
+        let existing_dirs: std::collections::HashSet<String> = self
+            .db
+            .get_all_games()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|g| g.dir.to_lowercase())
+            .collect();
+
         let mut unregistered = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&self.games_root) {
             for entry in entries.flatten() {
@@ -169,7 +251,7 @@ impl App {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if !name.starts_with('.')
                         && !IGNORE_DIRS.contains(&name.as_str())
-                        && !self.registry.games.contains_key(&name)
+                        && !existing_dirs.contains(&name.to_lowercase())
                     {
                         unregistered.push(path);
                     }
@@ -191,6 +273,7 @@ impl App {
                 filtered_indices,
                 selected_bin: 0,
                 search_query: String::new(),
+                is_searching: true, // Default to search mode as requested!
             };
         }
     }

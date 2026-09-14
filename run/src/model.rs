@@ -111,6 +111,7 @@ impl GameRegistry {
         Self::default()
     }
 
+    #[allow(dead_code)]
     pub fn save(&self, games_root: &Path) -> std::io::Result<()> {
         let reg_path = games_root.join(REGISTRY_FILENAME);
         let tmp_path = games_root.join(format!("{}.tmp", REGISTRY_FILENAME));
@@ -149,6 +150,7 @@ impl GameStats {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_stat_mut(&mut self, dir_key: &str) -> &mut GameStatEntry {
         if self.stats.contains_key(dir_key) {
             return self.stats.get_mut(dir_key).unwrap();
@@ -167,6 +169,7 @@ impl GameStats {
         }
     }
 
+    #[allow(dead_code)]
     pub fn save(&self, games_root: &Path) -> std::io::Result<()> {
         let stats_path = games_root.join(STATS_FILENAME);
         let tmp_path = games_root.join(format!("{}.tmp", STATS_FILENAME));
@@ -219,18 +222,36 @@ pub fn format_relative_time(iso_str: Option<&str>) -> String {
 }
 
 pub fn format_star_rating(rating: u8) -> String {
-    match rating {
-        1..=5 => {
-            let stars = "⭐".repeat(rating as usize);
-            let label = match rating {
-                5 => "Masterpiece",
-                4 => "Great",
-                3 => "Good",
-                2 => "Mediocre",
-                _ => "Bad",
-            };
-            format!("{} ({}/5 • {})", stars, rating, label)
-        }
-        _ => "Unrated".to_string(),
+    let r = rating.min(10);
+    if r == 0 {
+        return "⚫⚫⚫⚫⚫  (0/10 • Unrated)".to_string();
     }
+
+    let mut slots = String::new();
+    for i in 0..5 {
+        let threshold = (i + 1) * 2;
+        if r >= threshold {
+            slots.push_str("🌟");
+        } else if r == threshold - 1 {
+            slots.push_str("⭐️");
+        } else {
+            slots.push_str("⚫");
+        }
+    }
+
+    let label = match r {
+        10 => "Masterpiece",
+        9 => "Exceptional",
+        8 => "Great",
+        7 => "Very Good",
+        6 => "Good",
+        5 => "Decent",
+        4 => "Mediocre",
+        3 => "Poor",
+        2 => "Bad",
+        1 => "Terrible",
+        _ => "Unrated",
+    };
+
+    format!("{}  ({}/10 • {})", slots, r, label)
 }

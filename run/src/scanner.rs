@@ -126,7 +126,7 @@ pub fn scan_executables(game_dir: &Path, max_depth: usize) -> Vec<PathBuf> {
                 .unwrap_or("")
                 .to_lowercase();
 
-            if non_exec_exts.contains(&ext.as_str()) {
+            if name_lower == "start_game.sh" || non_exec_exts.contains(&ext.as_str()) {
                 continue;
             }
 

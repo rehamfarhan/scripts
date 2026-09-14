@@ -1,18 +1,19 @@
+use crossterm::cursor::Show;
 use crossterm::event::{self, Event};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, LeaveAlternateScreen};
 use crossterm::execute;
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, LeaveAlternateScreen};
 use std::io::{stdout, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-use crate::model::{GameEntry, GameStats};
+use crate::db::{Database, GameRecord};
 use crate::recap::render_post_game_recap;
 use crate::scanner::create_launcher_script;
 
 pub fn launch_game_attached(
     games_root: &Path,
-    game: &GameEntry,
+    game: &GameRecord,
     wait_key_before_exit: bool,
 ) -> std::io::Result<()> {
     let folder_path = games_root.join(&game.dir);
@@ -29,9 +30,9 @@ pub fn launch_game_attached(
         game.wine_opts.as_ref(),
     )?;
 
-    // Leave TUI alternate screen and disable raw mode
+    // Leave TUI alternate screen, disable raw mode, show cursor
     let mut out = stdout();
-    let _ = execute!(out, LeaveAlternateScreen);
+    let _ = execute!(out, LeaveAlternateScreen, Show);
     let _ = disable_raw_mode();
     print!("\x1b[H\x1b[2J");
     let _ = out.flush();
@@ -61,9 +62,13 @@ pub fn launch_game_attached(
 
     // Spawn and wait for game process
     let mut child = cmd.spawn()?;
-    let _ = child.wait();
+    let exit_status = child.wait()?;
 
     let elapsed_sec = start_time.elapsed().as_secs();
+
+    // Ensure cursor is visible and terminal is clean
+    let _ = execute!(stdout(), Show);
+    let _ = disable_raw_mode();
 
     // Keyd safety cleanup
     if let Some(ref opts) = game.wine_opts {
@@ -76,16 +81,22 @@ pub fn launch_game_attached(
         }
     }
 
-    // Update playtime statistics
-    let mut stats_data = GameStats::load(games_root);
-    let (total_seconds, play_count, rating) = {
-        let entry = stats_data.stats.entry(game.dir.clone()).or_default();
-        entry.playtime_seconds += elapsed_sec;
-        entry.play_count += 1;
-        entry.last_played = Some(iso_now);
-        (entry.playtime_seconds, entry.play_count, entry.rating)
+    // Check for game crash or non-zero exit
+    if !exit_status.success() {
+        let code_str = exit_status
+            .code()
+            .map(|c| format!("code {}", c))
+            .unwrap_or_else(|| "terminated by signal".to_string());
+        println!("\n\x1b[33m⚠️ Game exited with {}\x1b[0m", code_str);
+    }
+
+    // Update playtime statistics in SQLite database
+    let (total_seconds, play_count, rating) = if let Ok(db) = Database::open(games_root) {
+        db.record_session(&game.dir, elapsed_sec, &iso_now)
+            .unwrap_or((game.playtime_seconds + elapsed_sec, game.play_count + 1, game.rating))
+    } else {
+        (game.playtime_seconds + elapsed_sec, game.play_count + 1, game.rating)
     };
-    let _ = stats_data.save(games_root);
 
     // Render post-game recap card
     render_post_game_recap(

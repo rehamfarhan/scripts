@@ -102,6 +102,8 @@ pub fn render_game_list(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(&game.display_name, style_item_normal())
             };
 
+            let fav_prefix = if game.favorite { "⭐ " } else { "" };
+
             let line = Line::from(vec![
                 Span::styled(
                     prefix,
@@ -111,7 +113,7 @@ pub fn render_game_list(f: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(COLOR_DARK_GREY)
                     },
                 ),
-                Span::raw(format!("{} ", icon)),
+                Span::raw(format!("{}{} ", fav_prefix, icon)),
                 title_span,
             ]);
 
@@ -133,10 +135,11 @@ pub fn render_game_list(f: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
+    let sort_badge = format!("[{}]", app.sort_mode.label());
     let title_text = if app.search_query.is_empty() {
-        format!(" Games ({}){} ", total_count, scroll_hint)
+        format!(" Games ({}) {} {} ", total_count, sort_badge, scroll_hint)
     } else {
-        format!(" Games ({}/{}){} ", filtered_count, total_count, scroll_hint)
+        format!(" Games ({}/{}) {} {} ", filtered_count, total_count, sort_badge, scroll_hint)
     };
 
     let list_block = Block::default()
