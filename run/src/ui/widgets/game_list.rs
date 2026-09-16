@@ -135,7 +135,7 @@ pub fn render_game_list(f: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
-    let sort_badge = format!("[{}]", app.sort_mode.label());
+    let sort_badge = format!("[{}]", app.sort_label());
     let title_text = if app.search_query.is_empty() {
         format!(" Games ({}) {} {} ", total_count, sort_badge, scroll_hint)
     } else {

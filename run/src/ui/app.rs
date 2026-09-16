@@ -9,45 +9,43 @@ use crate::model::WineOpts;
 use crate::scanner::scan_executables;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SortMode {
+pub enum SortField {
     Recent,
     Playtime,
     Rating,
-    AlphabeticalAsc,
-    AlphabeticalDesc,
+    Alphabetical,
     Sessions,
 }
 
-impl SortMode {
+impl SortField {
     pub fn next(self) -> Self {
         match self {
             Self::Recent => Self::Playtime,
             Self::Playtime => Self::Rating,
-            Self::Rating => Self::AlphabeticalAsc,
-            Self::AlphabeticalAsc => Self::AlphabeticalDesc,
-            Self::AlphabeticalDesc => Self::Sessions,
+            Self::Rating => Self::Alphabetical,
+            Self::Alphabetical => Self::Sessions,
             Self::Sessions => Self::Recent,
         }
     }
 
+    #[allow(dead_code)]
     pub fn prev(self) -> Self {
         match self {
             Self::Recent => Self::Sessions,
             Self::Playtime => Self::Recent,
             Self::Rating => Self::Playtime,
-            Self::AlphabeticalAsc => Self::Rating,
-            Self::AlphabeticalDesc => Self::AlphabeticalAsc,
-            Self::Sessions => Self::AlphabeticalDesc,
+            Self::Alphabetical => Self::Rating,
+            Self::Sessions => Self::Alphabetical,
         }
     }
 
-    pub fn label(self) -> &'static str {
+    #[allow(dead_code)]
+    pub fn name(self) -> &'static str {
         match self {
             Self::Recent => "Recent ⏱️",
             Self::Playtime => "Playtime ⏳",
             Self::Rating => "Rating 🌟",
-            Self::AlphabeticalAsc => "A-Z 🔤",
-            Self::AlphabeticalDesc => "Z-A 🔤",
+            Self::Alphabetical => "Alphabetical 🔤",
             Self::Sessions => "Sessions 🎮",
         }
     }
@@ -97,7 +95,8 @@ pub struct App {
     pub selected_index: usize,
     pub search_query: String,
     pub is_searching: bool,
-    pub sort_mode: SortMode,
+    pub sort_field: SortField,
+    pub sort_descending: bool,
     pub active_modal: ActiveModal,
     pub toast: Option<(String, Instant)>,
     pub should_quit: bool,
@@ -120,7 +119,8 @@ impl App {
             search_query: String::new(),
             is_searching: true, // Starts in fuzzy search mode by default!
             show_quick_actions: false, // Hidden by default, toggled with 'i'
-            sort_mode: SortMode::Recent,
+            sort_field: SortField::Recent,
+            sort_descending: true, // Default descending order (e.g. most recent, highest playtime/rating)
             active_modal: ActiveModal::None,
             toast: None,
             should_quit: false,
@@ -147,6 +147,29 @@ impl App {
         None
     }
 
+    pub fn sort_label(&self) -> String {
+        let arrow = if self.sort_descending { "▼" } else { "▲" };
+        match self.sort_field {
+            SortField::Recent => {
+                if self.sort_descending {
+                    "Recent ⏱️ ▼".to_string()
+                } else {
+                    "Oldest ⏱️ ▲".to_string()
+                }
+            }
+            SortField::Playtime => format!("Playtime ⏳ {}", arrow),
+            SortField::Rating => format!("Rating 🌟 {}", arrow),
+            SortField::Alphabetical => {
+                if self.sort_descending {
+                    "Z-A 🔤 ▼".to_string()
+                } else {
+                    "A-Z 🔤 ▲".to_string()
+                }
+            }
+            SortField::Sessions => format!("Sessions 🎮 {}", arrow),
+        }
+    }
+
     pub fn reload_games(&mut self) {
         let mut list: Vec<GameRecord> = self
             .db
@@ -156,37 +179,33 @@ impl App {
             .filter(|g| !g.ignored)
             .collect();
 
-        // Sort based on active sort_mode, with favorites pinned on top
+        // Sort based on active sort_field and sort_descending, with favorites pinned on top
         list.sort_by(|a, b| {
             if a.favorite != b.favorite {
                 return b.favorite.cmp(&a.favorite);
             }
 
-            match self.sort_mode {
-                SortMode::Recent => {
+            let cmp = match self.sort_field {
+                SortField::Recent => {
                     let lp_a = a.last_played.as_deref().unwrap_or("");
                     let lp_b = b.last_played.as_deref().unwrap_or("");
-                    lp_b.cmp(lp_a).then_with(|| a.display_name.cmp(&b.display_name))
+                    lp_a.cmp(lp_b)
                 }
-                SortMode::Playtime => {
-                    b.playtime_seconds.cmp(&a.playtime_seconds)
-                        .then_with(|| a.display_name.cmp(&b.display_name))
-                }
-                SortMode::Rating => {
-                    b.rating.cmp(&a.rating)
-                        .then_with(|| a.display_name.cmp(&b.display_name))
-                }
-                SortMode::AlphabeticalAsc => {
+                SortField::Playtime => a.playtime_seconds.cmp(&b.playtime_seconds),
+                SortField::Rating => a.rating.cmp(&b.rating),
+                SortField::Alphabetical => {
                     a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
                 }
-                SortMode::AlphabeticalDesc => {
-                    b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase())
-                }
-                SortMode::Sessions => {
-                    b.play_count.cmp(&a.play_count)
-                        .then_with(|| a.display_name.cmp(&b.display_name))
-                }
-            }
+                SortField::Sessions => a.play_count.cmp(&b.play_count),
+            };
+
+            let ordered_cmp = if self.sort_descending {
+                cmp.reverse()
+            } else {
+                cmp
+            };
+
+            ordered_cmp.then_with(|| a.display_name.cmp(&b.display_name))
         });
 
         self.all_games = list;

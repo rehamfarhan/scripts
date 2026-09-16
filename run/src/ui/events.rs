@@ -156,20 +156,20 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 app.launch_target = Some(game);
             }
         }
-        // Sorting: s = next sort mode, S (Shift+S) = prev sort mode
+        // Sorting: s = next sort field, S (Shift+S) = toggle ascending/descending order
         KeyCode::Char('s') => {
             if key.modifiers.contains(KeyModifiers::SHIFT) {
-                app.sort_mode = app.sort_mode.prev();
+                app.sort_descending = !app.sort_descending;
             } else {
-                app.sort_mode = app.sort_mode.next();
+                app.sort_field = app.sort_field.next();
             }
             app.reload_games();
-            app.set_toast(format!("🔀 Sort Mode: {}", app.sort_mode.label()));
+            app.set_toast(format!("🔀 Sort: {}", app.sort_label()));
         }
         KeyCode::Char('S') => {
-            app.sort_mode = app.sort_mode.prev();
+            app.sort_descending = !app.sort_descending;
             app.reload_games();
-            app.set_toast(format!("🔀 Sort Mode: {}", app.sort_mode.label()));
+            app.set_toast(format!("🔀 Sort: {}", app.sort_label()));
         }
         // Favorite toggle
         KeyCode::Char('f') => {
