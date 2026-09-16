@@ -22,6 +22,7 @@ impl MediaMetadata {
             .args([
                 "--dump-single-json",
                 "--no-playlist",
+                "--no-warnings",
                 "--skip-download",
                 url,
             ])
@@ -34,8 +35,15 @@ impl MediaMetadata {
             anyhow::bail!("yt-dlp error: {}", err.trim());
         }
 
-        let json_str = String::from_utf8_lossy(&output.stdout);
-        let meta: MediaMetadata = serde_json::from_str(&json_str)
+        let raw_stdout = String::from_utf8_lossy(&output.stdout);
+        // Find json boundaries in case of stray stdout lines
+        let json_str = if let (Some(start), Some(end)) = (raw_stdout.find('{'), raw_stdout.rfind('}')) {
+            &raw_stdout[start..=end]
+        } else {
+            raw_stdout.trim()
+        };
+
+        let meta: MediaMetadata = serde_json::from_str(json_str)
             .context("Failed to parse yt-dlp JSON metadata")?;
 
         Ok(meta)

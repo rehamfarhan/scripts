@@ -15,6 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 pub enum DownloadProgress {
     ResolvingMetadata,
     MetadataLoaded(MediaMetadata),
+    MetadataFailed(String),
     Downloading {
         percent: f64,
         speed: String,
@@ -63,6 +64,8 @@ impl Downloader {
         cmd.kill_on_drop(true);
         cmd.args([
             "--newline",
+            "--no-playlist",
+            "--no-warnings",
             "--progress",
             "--progress-template",
             "download:mediafetch:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._total_bytes_str)s",
@@ -99,13 +102,18 @@ impl Downloader {
         // Track stderr in background for error diagnostics
         let stderr_task = tokio::spawn(async move {
             let mut err_reader = BufReader::new(stderr).lines();
-            let mut last_err = String::new();
+            let mut err_lines = Vec::new();
             while let Ok(Some(line)) = err_reader.next_line().await {
-                if !line.trim().is_empty() {
-                    last_err = line;
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    err_lines.push(trimmed.to_string());
                 }
             }
-            last_err
+            if err_lines.is_empty() {
+                String::new()
+            } else {
+                err_lines.join("\n")
+            }
         });
 
         while let Ok(Some(line)) = reader.next_line().await {
@@ -137,17 +145,22 @@ impl Downloader {
             } else if line.starts_with('/') {
                 // `after_move:filepath` prints the final full absolute path
                 final_file_path = Some(PathBuf::from(line));
-            } else if line.contains("[ExtractAudio]") || line.contains("[Merger]") || line.contains("[Fixup") || line.contains("[EmbedThumbnail]") {
+            } else if line.contains("[ExtractAudio]") || line.contains("[Merger]") || line.contains("[Fixup") || line.contains("[EmbedThumbnail]") || line.contains("[ThumbnailsConvertor]") || line.contains("[Metadata]") {
                 let _ = tx.send(DownloadProgress::ProcessingStep(line.to_string()));
             }
         }
 
         let status = child.wait().await.context("yt-dlp child process failed to exit")?;
-        let last_stderr = stderr_task.await.unwrap_or_default();
+        let full_stderr = stderr_task.await.unwrap_or_default();
 
         if !status.success() {
-            let err_msg = if !last_stderr.is_empty() {
-                last_stderr
+            let err_msg = if !full_stderr.is_empty() {
+                // Pick error line or full stderr
+                if let Some(err_line) = full_stderr.lines().find(|l| l.contains("ERROR:")) {
+                    err_line.to_string()
+                } else {
+                    full_stderr.lines().last().unwrap_or(&full_stderr).to_string()
+                }
             } else {
                 format!("yt-dlp process exited with code {:?}", status.code())
             };
@@ -173,8 +186,22 @@ impl Downloader {
         if preset.should_fetch_lyrics() {
             let _ = tx.send(DownloadProgress::ProcessingStep("Querying LRCLIB for synced lyrics...".to_string()));
             let lyrics_mgr = LyricsManager::new();
-            let title = metadata.display_title();
-            let uploader = metadata.display_uploader();
+            let title = if !resolved_title.is_empty() {
+                &resolved_title
+            } else if !metadata.display_title().is_empty() && metadata.display_title() != "Unknown Title" {
+                metadata.display_title()
+            } else {
+                resolved_file.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown")
+            };
+
+            let uploader = if !resolved_uploader.is_empty() {
+                &resolved_uploader
+            } else if !metadata.display_uploader().is_empty() && metadata.display_uploader() != "Unknown Creator" {
+                metadata.display_uploader()
+            } else {
+                ""
+            };
+
             let (artist, track) = LyricsManager::parse_artist_and_title(title, uploader);
             let duration_secs = metadata.duration.map(|d| d as u64);
 

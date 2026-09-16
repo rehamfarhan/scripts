@@ -297,7 +297,7 @@ async fn main() -> Result<()> {
                     let _ = tx_meta.send(DownloadProgress::MetadataLoaded(meta));
                 }
                 Err(err) => {
-                    let _ = tx_meta.send(DownloadProgress::Failed(format!("Metadata error: {}", err)));
+                    let _ = tx_meta.send(DownloadProgress::MetadataFailed(format!("Metadata: {}", err)));
                 }
             }
         });
@@ -315,12 +315,22 @@ async fn main() -> Result<()> {
             match progress {
                 DownloadProgress::ResolvingMetadata => {
                     app.resolving = true;
-                    app.current_step = "Resolving stream info...".to_string();
+                    if !app.downloading {
+                        app.current_step = "Resolving stream info...".to_string();
+                    }
                 }
                 DownloadProgress::MetadataLoaded(meta) => {
                     app.resolving = false;
-                    app.current_step = format!("Ready: {}", meta.display_title());
+                    if !app.downloading {
+                        app.current_step = format!("Ready: {}", meta.display_title());
+                    }
                     app.metadata = Some(meta);
+                }
+                DownloadProgress::MetadataFailed(_err) => {
+                    app.resolving = false;
+                    if !app.downloading && app.error_message.is_none() {
+                        app.current_step = "Ready (metadata preview skipped)".to_string();
+                    }
                 }
                 DownloadProgress::Downloading { percent, speed, eta, size } => {
                     app.resolving = false;
@@ -370,7 +380,7 @@ async fn main() -> Result<()> {
                                             let _ = tx_meta.send(DownloadProgress::MetadataLoaded(meta));
                                         }
                                         Err(err) => {
-                                            let _ = tx_meta.send(DownloadProgress::Failed(format!("Metadata error: {}", err)));
+                                            let _ = tx_meta.send(DownloadProgress::MetadataFailed(format!("Metadata: {}", err)));
                                         }
                                     }
                                 });

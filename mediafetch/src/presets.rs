@@ -115,7 +115,7 @@ impl PresetType {
                 "--embed-metadata",
             ],
             PresetType::Shorts => vec![
-                "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
+                "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
                 "--merge-output-format", "mp4",
                 "--embed-thumbnail",
             ],
