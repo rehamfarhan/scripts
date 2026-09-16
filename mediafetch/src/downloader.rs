@@ -116,17 +116,22 @@ impl Downloader {
             }
         });
 
+        let mut stream_count: usize = 0;
+        let mut max_percent: f64 = 0.0;
+        let is_multi_stream = matches!(preset, PresetType::Video | PresetType::Shorts | PresetType::Archive);
+
         while let Ok(Some(line)) = reader.next_line().await {
             let line = line.trim();
             if let Some(t) = line.strip_prefix("title:") {
                 resolved_title = t.trim().to_string();
+                let _ = tx.send(DownloadProgress::ProcessingStep(format!("Discovered: {}", resolved_title)));
             } else if let Some(u) = line.strip_prefix("uploader:") {
                 resolved_uploader = u.trim().to_string();
             } else if let Some(rest) = line.strip_prefix("mediafetch:") {
                 let parts: Vec<&str> = rest.trim().split('|').collect();
                 if parts.len() >= 4 {
                     let percent_raw = parts[0].replace('%', "").trim().to_string();
-                    let percent = percent_raw.parse::<f64>().unwrap_or(0.0);
+                    let raw_percent = percent_raw.parse::<f64>().unwrap_or(0.0);
                     let speed = parts[1].trim().to_string();
                     let eta = parts[2].trim().to_string();
                     let size = parts[3].trim().to_string();
@@ -135,8 +140,26 @@ impl Downloader {
                         last_speed = speed.clone();
                     }
 
+                    // Multi-stream percentage smoothing (video ~85%, audio ~15%)
+                    let display_percent = if is_multi_stream {
+                        if raw_percent < 5.0 && max_percent > 80.0 {
+                            stream_count = 1; // Switched to audio stream
+                        }
+                        if stream_count == 0 {
+                            let p = raw_percent * 0.85;
+                            if p > max_percent { max_percent = p; }
+                            max_percent
+                        } else {
+                            let p = 85.0 + (raw_percent * 0.15);
+                            if p > max_percent { max_percent = p; }
+                            max_percent
+                        }
+                    } else {
+                        raw_percent
+                    };
+
                     let _ = tx.send(DownloadProgress::Downloading {
-                        percent,
+                        percent: display_percent.min(100.0),
                         speed: if speed.is_empty() || speed == "NA" { "-- KiB/s".to_string() } else { speed },
                         eta: if eta.is_empty() || eta == "NA" { "--:--".to_string() } else { eta },
                         size: if size.is_empty() || size == "NA" { "-- MiB".to_string() } else { size },
@@ -145,8 +168,18 @@ impl Downloader {
             } else if line.starts_with('/') {
                 // `after_move:filepath` prints the final full absolute path
                 final_file_path = Some(PathBuf::from(line));
-            } else if line.contains("[ExtractAudio]") || line.contains("[Merger]") || line.contains("[Fixup") || line.contains("[EmbedThumbnail]") || line.contains("[ThumbnailsConvertor]") || line.contains("[Metadata]") {
-                let _ = tx.send(DownloadProgress::ProcessingStep(line.to_string()));
+            } else if line.contains("[ExtractAudio]") {
+                let _ = tx.send(DownloadProgress::ProcessingStep("Extracting audio stream...".to_string()));
+            } else if line.contains("[Merger]") {
+                let _ = tx.send(DownloadProgress::ProcessingStep("Merging video and audio streams (ffmpeg)...".to_string()));
+            } else if line.contains("[ThumbnailsConvertor]") {
+                let _ = tx.send(DownloadProgress::ProcessingStep("Converting and cropping thumbnail...".to_string()));
+            } else if line.contains("[EmbedThumbnail]") {
+                let _ = tx.send(DownloadProgress::ProcessingStep("Embedding thumbnail art...".to_string()));
+            } else if line.contains("[Metadata]") {
+                let _ = tx.send(DownloadProgress::ProcessingStep("Embedding media metadata tags...".to_string()));
+            } else if line.contains("[Fixup") {
+                let _ = tx.send(DownloadProgress::ProcessingStep("Applying container fixups...".to_string()));
             }
         }
 

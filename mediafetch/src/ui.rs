@@ -27,6 +27,8 @@ pub struct AppState {
     pub current_step: String,
     pub error_message: Option<String>,
     pub completed_summary: Option<DownloadSummary>,
+    pub logs: Vec<String>,
+    pub spinner_frame: usize,
 }
 
 impl AppState {
@@ -52,7 +54,16 @@ impl AppState {
             current_step: "Ready".to_string(),
             error_message: None,
             completed_summary: None,
+            logs: vec!["Ready to fetch media.".to_string()],
+            spinner_frame: 0,
         }
+    }
+
+    pub fn add_log(&mut self, msg: String) {
+        if self.logs.len() >= 100 {
+            self.logs.remove(0);
+        }
+        self.logs.push(msg);
     }
 
     pub fn selected_preset(&self) -> PresetType {
@@ -161,13 +172,47 @@ fn render_header(f: &mut Frame, app: &AppState, area: Rect) {
 }
 
 fn render_middle(f: &mut Frame, app: &AppState, area: Rect) {
-    let split = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+    let vert_split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(9), Constraint::Length(6)])
         .split(area);
 
-    render_presets_list(f, app, split[0]);
-    render_inspector(f, app, split[1]);
+    let horiz_split = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(vert_split[0]);
+
+    render_presets_list(f, app, horiz_split[0]);
+    render_inspector(f, app, horiz_split[1]);
+    render_activity_log(f, app, vert_split[1]);
+}
+
+fn render_activity_log(f: &mut Frame, app: &AppState, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(" 📋 Live Operations Log ");
+
+    let max_lines = area.height.saturating_sub(2) as usize;
+    let log_slice = if app.logs.len() > max_lines {
+        &app.logs[app.logs.len() - max_lines..]
+    } else {
+        &app.logs[..]
+    };
+
+    let items: Vec<Line> = log_slice
+        .iter()
+        .map(|l| {
+            Line::from(vec![
+                Span::styled(" ❯ ", Style::default().fg(Color::Cyan)),
+                Span::styled(l, Style::default().fg(Color::Gray)),
+            ])
+        })
+        .collect();
+
+    let p = Paragraph::new(items).block(block);
+    f.render_widget(p, area);
 }
 
 fn render_presets_list(f: &mut Frame, app: &AppState, area: Rect) {
@@ -175,7 +220,7 @@ fn render_presets_list(f: &mut Frame, app: &AppState, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Blue))
-        .title(" 🎯 Smart Presets ");
+        .title(" 🎯 Presets ");
 
     let items: Vec<ListItem> = PresetType::ALL
         .iter()
@@ -291,6 +336,9 @@ fn render_inspector(f: &mut Frame, app: &AppState, area: Rect) {
 }
 
 fn render_progress(f: &mut Frame, app: &AppState, area: Rect) {
+    const SPINNERS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let spinner = SPINNERS[app.spinner_frame % SPINNERS.len()];
+
     let border_color = if app.downloading {
         Color::Green
     } else if app.error_message.is_some() {
@@ -321,7 +369,7 @@ fn render_progress(f: &mut Frame, app: &AppState, area: Rect) {
         ])
     } else if app.downloading {
         Line::from(vec![
-            Span::styled("⬇ ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{} ", spinner), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled(&app.current_step, Style::default().fg(Color::White)),
             Span::styled("   Speed: ", Style::default().fg(Color::DarkGray)),
             Span::styled(&app.download_speed, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -329,6 +377,11 @@ fn render_progress(f: &mut Frame, app: &AppState, area: Rect) {
             Span::styled(&app.download_eta, Style::default().fg(Color::Yellow)),
             Span::styled("   Size: ", Style::default().fg(Color::DarkGray)),
             Span::styled(&app.download_size, Style::default().fg(Color::Magenta)),
+        ])
+    } else if app.resolving {
+        Line::from(vec![
+            Span::styled(format!("{} ", spinner), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("Resolving stream info & inspecting video formats...", Style::default().fg(Color::Yellow)),
         ])
     } else {
         Line::from(vec![
@@ -341,7 +394,11 @@ fn render_progress(f: &mut Frame, app: &AppState, area: Rect) {
 
     // Gauge bar
     let gauge_ratio = (app.download_percent / 100.0).clamp(0.0, 1.0);
-    let gauge_label = format!("{:.1}%", app.download_percent);
+    let gauge_label = if app.resolving && !app.downloading {
+        format!("{} Inspecting...", spinner)
+    } else {
+        format!("{:.1}%", app.download_percent)
+    };
     let gauge = Gauge::default()
         .gauge_style(Style::default().fg(Color::Cyan).bg(Color::Rgb(25, 30, 45)))
         .ratio(gauge_ratio)

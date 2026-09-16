@@ -308,6 +308,7 @@ async fn main() -> Result<()> {
 
     // Main event loop
     loop {
+        app.spinner_frame = app.spinner_frame.wrapping_add(1);
         terminal.draw(|f| ui::render(f, &app))?;
 
         // Handle async download updates
@@ -317,6 +318,7 @@ async fn main() -> Result<()> {
                     app.resolving = true;
                     if !app.downloading {
                         app.current_step = "Resolving stream info...".to_string();
+                        app.add_log("Inspecting media format & metadata...".to_string());
                     }
                 }
                 DownloadProgress::MetadataLoaded(meta) => {
@@ -324,6 +326,7 @@ async fn main() -> Result<()> {
                     if !app.downloading {
                         app.current_step = format!("Ready: {}", meta.display_title());
                     }
+                    app.add_log(format!("Stream verified: {}", meta.display_title()));
                     app.metadata = Some(meta);
                 }
                 DownloadProgress::MetadataFailed(_err) => {
@@ -331,6 +334,7 @@ async fn main() -> Result<()> {
                     if !app.downloading && app.error_message.is_none() {
                         app.current_step = "Ready (metadata preview skipped)".to_string();
                     }
+                    app.add_log("Stream inspection completed (direct mode).".to_string());
                 }
                 DownloadProgress::Downloading { percent, speed, eta, size } => {
                     app.resolving = false;
@@ -342,15 +346,18 @@ async fn main() -> Result<()> {
                     app.current_step = format!("Downloading stream ({:.1}%)", percent);
                 }
                 DownloadProgress::ProcessingStep(step) => {
+                    app.add_log(step.clone());
                     app.current_step = step;
                 }
                 DownloadProgress::Complete(summary) => {
+                    app.add_log("Download complete & verified.".to_string());
                     completed_summary = Some(summary);
                     break;
                 }
                 DownloadProgress::Failed(err) => {
                     app.resolving = false;
                     app.downloading = false;
+                    app.add_log(format!("Error: {}", err));
                     app.error_message = Some(err);
                 }
             }
