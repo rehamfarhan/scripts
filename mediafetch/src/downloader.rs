@@ -116,10 +116,6 @@ impl Downloader {
             }
         });
 
-        let mut stream_count: usize = 0;
-        let mut max_percent: f64 = 0.0;
-        let is_multi_stream = matches!(preset, PresetType::Video | PresetType::Shorts | PresetType::Archive);
-
         while let Ok(Some(line)) = reader.next_line().await {
             let line = line.trim();
             if let Some(t) = line.strip_prefix("title:") {
@@ -140,26 +136,8 @@ impl Downloader {
                         last_speed = speed.clone();
                     }
 
-                    // Multi-stream percentage smoothing (video ~85%, audio ~15%)
-                    let display_percent = if is_multi_stream {
-                        if raw_percent < 5.0 && max_percent > 80.0 {
-                            stream_count = 1; // Switched to audio stream
-                        }
-                        if stream_count == 0 {
-                            let p = raw_percent * 0.85;
-                            if p > max_percent { max_percent = p; }
-                            max_percent
-                        } else {
-                            let p = 85.0 + (raw_percent * 0.15);
-                            if p > max_percent { max_percent = p; }
-                            max_percent
-                        }
-                    } else {
-                        raw_percent
-                    };
-
                     let _ = tx.send(DownloadProgress::Downloading {
-                        percent: display_percent.min(100.0),
+                        percent: raw_percent.clamp(0.0, 100.0),
                         speed: if speed.is_empty() || speed == "NA" { "-- KiB/s".to_string() } else { speed },
                         eta: if eta.is_empty() || eta == "NA" { "--:--".to_string() } else { eta },
                         size: if size.is_empty() || size == "NA" { "-- MiB".to_string() } else { size },

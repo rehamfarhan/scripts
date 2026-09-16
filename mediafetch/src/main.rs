@@ -308,7 +308,7 @@ async fn main() -> Result<()> {
 
     // Main event loop
     loop {
-        app.spinner_frame = app.spinner_frame.wrapping_add(1);
+        app.tick_smooth_animation();
         terminal.draw(|f| ui::render(f, &app))?;
 
         // Handle async download updates
@@ -339,7 +339,7 @@ async fn main() -> Result<()> {
                 DownloadProgress::Downloading { percent, speed, eta, size } => {
                     app.resolving = false;
                     app.downloading = true;
-                    app.download_percent = percent;
+                    app.target_percent = percent;
                     app.download_speed = speed;
                     app.download_eta = eta;
                     app.download_size = size;

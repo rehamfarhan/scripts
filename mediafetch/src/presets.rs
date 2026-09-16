@@ -93,7 +93,9 @@ impl PresetType {
             PresetType::Video => vec![
                 "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
                 "--merge-output-format", "mkv",
+                "--convert-thumbnails", "png",
                 "--embed-thumbnail",
+                "--embed-metadata",
                 "--embed-subs",
                 "--sub-langs", "en.*",
             ],
@@ -117,7 +119,9 @@ impl PresetType {
             PresetType::Shorts => vec![
                 "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
                 "--merge-output-format", "mp4",
+                "--convert-thumbnails", "png",
                 "--embed-thumbnail",
+                "--embed-metadata",
             ],
             PresetType::Podcast => vec![
                 "-x",
@@ -129,6 +133,7 @@ impl PresetType {
                 "-f", "bv*+ba/b",
                 "--all-subs",
                 "--embed-subs",
+                "--convert-thumbnails", "png",
                 "--embed-thumbnail",
                 "--embed-metadata",
             ],

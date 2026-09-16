@@ -21,6 +21,7 @@ pub struct AppState {
     pub resolving: bool,
     pub downloading: bool,
     pub download_percent: f64,
+    pub target_percent: f64,
     pub download_speed: String,
     pub download_eta: String,
     pub download_size: String,
@@ -48,6 +49,7 @@ impl AppState {
             resolving: false,
             downloading: false,
             download_percent: 0.0,
+            target_percent: 0.0,
             download_speed: "-- KiB/s".to_string(),
             download_eta: "--:--".to_string(),
             download_size: "-- MiB".to_string(),
@@ -56,6 +58,16 @@ impl AppState {
             completed_summary: None,
             logs: vec!["Ready to fetch media.".to_string()],
             spinner_frame: 0,
+        }
+    }
+
+    pub fn tick_smooth_animation(&mut self) {
+        self.spinner_frame = self.spinner_frame.wrapping_add(1);
+        if (self.target_percent - self.download_percent).abs() > 0.05 {
+            // CAVA-style exponential moving average lerp
+            self.download_percent += (self.target_percent - self.download_percent) * 0.22;
+        } else {
+            self.download_percent = self.target_percent;
         }
     }
 
