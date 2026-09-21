@@ -91,6 +91,9 @@ pub fn render_modals(f: &mut Frame, app: &App, area: Rect) {
                 area,
             );
         }
+        ActiveModal::ResetScriptConfirmation { game_name } => {
+            render_reset_script_modal(f, game_name, area);
+        }
     }
 }
 
@@ -549,4 +552,60 @@ fn render_wizard_modal(
 
     let list = List::new(items).block(block);
     f.render_widget(list, popup_chunks[1]);
+}
+
+fn render_reset_script_modal(f: &mut Frame, game_name: &str, area: Rect) {
+    let popup_area = centered_rect(60, 30, area);
+    f.render_widget(Clear, popup_area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  ⚠️  Reset Launcher Script",
+                Style::default()
+                    .fg(COLOR_YELLOW)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  This will discard the current start_game.sh for",
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("  '{}' and replace it with a freshly generated one.", game_name),
+                Style::default()
+                    .fg(COLOR_CYAN)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  Any hand-edited content in the script will be lost.",
+                Style::default().fg(COLOR_GREY),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "  [Enter] Confirm Reset   [Esc/n] Cancel",
+                Style::default().fg(COLOR_DARK_GREY),
+            ),
+        ]),
+    ];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BORDER_TYPE)
+        .border_style(style_border_active())
+        .title(" 🔄 Reset Launcher Script ")
+        .style(Style::default().bg(COLOR_BG_POPUP));
+
+    let widget = Paragraph::new(lines).block(block);
+    f.render_widget(widget, popup_area);
 }

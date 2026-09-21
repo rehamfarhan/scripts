@@ -1,12 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::db::GameRecord;
 use crate::model::{format_star_rating, WineOpts};
-use crate::scanner::{create_desktop_entry, create_launcher_script, scan_executables};
+use crate::scanner::{create_desktop_entry, create_launcher_script, scan_executables, ScriptGenerationResult};
 use crate::ui::app::{ActiveModal, App};
 
 pub fn handle_key_event(app: &mut App, key: KeyEvent) {
@@ -108,6 +109,14 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('k') | KeyCode::Char('p') => {
                 app.select_prev();
+                return;
+            }
+            KeyCode::Char('r') => {
+                if let Some(game) = app.selected_game() {
+                    app.active_modal = ActiveModal::ResetScriptConfirmation {
+                        game_name: game.display_name.clone(),
+                    };
+                }
                 return;
             }
             _ => {}
@@ -238,7 +247,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 let binary_path = PathBuf::from(&game.binary);
                 let wine_prefix = game.wine_prefix.as_ref().map(PathBuf::from);
 
-                let script_path = create_launcher_script(
+                let result = create_launcher_script(
                     &folder_path,
                     &binary_path,
                     &game.display_name,
@@ -247,7 +256,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                     game.wine_opts.as_ref(),
                 );
 
-                if let Ok(script) = script_path {
+                if let Ok((script, _gen)) = result {
                     let mut updated = game.clone();
                     updated.custom_wrapper = true;
                     let _ = app.db.upsert_game(&updated);
@@ -532,15 +541,24 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             let _ = app.db.upsert_game(&updated);
 
                             let folder = app.games_root.join(&game.dir);
-                            let _ = create_launcher_script(
+                            match create_launcher_script(
                                 &folder,
                                 Path::new(&game.binary),
                                 &game.display_name,
                                 game.is_windows,
                                 game.wine_prefix.as_deref().map(Path::new),
                                 Some(&opts),
-                            );
-                            app.set_toast(format!("✓ Video driver updated for '{}'", game.display_name));
+                            ) {
+                                Ok((_, ScriptGenerationResult::SkippedCorruptMarkers)) => {
+                                    app.set_toast(format!(
+                                        "⚠️ Settings not applied — start_game.sh markers are missing or corrupted for '{}'. Use Ctrl+R to reset the script.",
+                                        game.display_name
+                                    ));
+                                }
+                                _ => {
+                                    app.set_toast(format!("✓ Video driver updated for '{}'", game.display_name));
+                                }
+                            }
                             app.reload_games();
                         }
                         ActiveModal::None
@@ -588,6 +606,9 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             opts,
                         }
                     }
+                    // NOTE: win_ver and sdl_driver for Windows games are stored but not yet
+                    // consumed by the generated start_game.sh — they are inert placeholders
+                    // for future Wine integration. See WineOpts doc comments in model.rs.
                     KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('l') => {
                         match selected_opt {
                             0 => opts.resolution = None,
@@ -611,15 +632,24 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             let _ = app.db.upsert_game(&updated);
 
                             let folder = app.games_root.join(&game.dir);
-                            let _ = create_launcher_script(
+                            match create_launcher_script(
                                 &folder,
                                 Path::new(&game.binary),
                                 &game.display_name,
                                 game.is_windows,
                                 game.wine_prefix.as_deref().map(Path::new),
                                 Some(&opts),
-                            );
-                            app.set_toast(format!("✓ Compatibility settings saved for '{}'", game.display_name));
+                            ) {
+                                Ok((_, ScriptGenerationResult::SkippedCorruptMarkers)) => {
+                                    app.set_toast(format!(
+                                        "⚠️ Settings not applied — start_game.sh markers are missing or corrupted for '{}'. Use Ctrl+R to reset the script.",
+                                        game.display_name
+                                    ));
+                                }
+                                _ => {
+                                    app.set_toast(format!("✓ Compatibility settings saved for '{}'", game.display_name));
+                                }
+                            }
                             app.reload_games();
                         }
                         ActiveModal::None
@@ -1047,6 +1077,7 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                                         playtime_seconds: 0,
                                         play_count: 0,
                                         last_played: None,
+                                        hidden: false,
                                     };
 
                                     let _ = app.db.upsert_game(&record);
@@ -1165,6 +1196,7 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                                 playtime_seconds: 0,
                                 play_count: 0,
                                 last_played: None,
+                                hidden: false,
                             };
                             let _ = app.db.upsert_game(&record);
                             app.set_toast(format!("🚫 Ignored folder '{}'", folder_name));
@@ -1306,6 +1338,32 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                 }
             }
         }
+        ActiveModal::ResetScriptConfirmation { game_name } => match key.code {
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => ActiveModal::None,
+            KeyCode::Enter => {
+                if let Some(game) = app.selected_game().cloned() {
+                    let folder = app.games_root.join(&game.dir);
+                    let script_path = folder.join("start_game.sh");
+                    // Delete existing file to force fresh generation (bypasses marker patching)
+                    let _ = fs::remove_file(&script_path);
+                    let _ = create_launcher_script(
+                        &folder,
+                        Path::new(&game.binary),
+                        &game.display_name,
+                        game.is_windows,
+                        game.wine_prefix.as_deref().map(Path::new),
+                        game.wine_opts.as_ref(),
+                    );
+                    let mut updated = game.clone();
+                    updated.custom_wrapper = false;
+                    let _ = app.db.upsert_game(&updated);
+                    app.set_toast(format!("🔄 Reset launcher script for '{}'", game.display_name));
+                    app.reload_games();
+                }
+                ActiveModal::None
+            }
+            _ => ActiveModal::ResetScriptConfirmation { game_name },
+        },
         ActiveModal::None => ActiveModal::None,
     };
 
@@ -1350,4 +1408,75 @@ fn which_bin(name: &str) -> bool {
             })
         })
         .is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_app_with_game() -> (tempfile::TempDir, App) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf());
+
+        // Exit search mode so hotkeys reach the main dashboard match
+        app.is_searching = false;
+
+        let game = GameRecord {
+            dir: "test_game".into(),
+            display_name: "Test Game".into(),
+            binary: "game.exe".into(),
+            is_windows: false,
+            wine_prefix: None,
+            wine_opts: None,
+            icon: None,
+            launcher_script: None,
+            desktop_entry: None,
+            ignored: false,
+            custom_wrapper: false,
+            favorite: false,
+            rating: 5,
+            playtime_seconds: 0,
+            play_count: 0,
+            last_played: None,
+            hidden: false,
+        };
+
+        app.db.upsert_game(&game).unwrap();
+        app.reload_games();
+        (dir, app)
+    }
+
+    #[test]
+    fn ctrl_r_opens_reset_confirmation_not_rate_game() {
+        let (_dir, mut app) = make_app_with_game();
+
+        let key = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+        handle_key_event(&mut app, key);
+
+        match &app.active_modal {
+            ActiveModal::ResetScriptConfirmation { game_name } => {
+                assert_eq!(game_name, "Test Game");
+            }
+            other => panic!(
+                "Ctrl+r should open ResetScriptConfirmation, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+    }
+
+    #[test]
+    fn plain_r_opens_rate_game() {
+        let (_dir, mut app) = make_app_with_game();
+
+        let key = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
+        handle_key_event(&mut app, key);
+
+        match &app.active_modal {
+            ActiveModal::RateGame { .. } => {}
+            other => panic!(
+                "Plain 'r' should open RateGame, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+    }
 }

@@ -22,6 +22,7 @@ pub struct GameRecord {
     pub playtime_seconds: u64,
     pub play_count: u64,
     pub last_played: Option<String>,
+    pub hidden: bool,
 }
 
 impl GameRecord {
@@ -40,6 +41,11 @@ impl GameRecord {
             ignored: Some(self.ignored),
             custom_wrapper: Some(self.custom_wrapper),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
     }
 }
 
@@ -70,7 +76,8 @@ impl Database {
                 rating INTEGER NOT NULL DEFAULT 0,
                 playtime_seconds INTEGER NOT NULL DEFAULT 0,
                 play_count INTEGER NOT NULL DEFAULT 0,
-                last_played TEXT
+                last_played TEXT,
+                hidden INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
@@ -81,6 +88,14 @@ impl Database {
             );
             ",
         )?;
+
+        // Migration: add hidden column to existing databases that lack it
+        let has_hidden: bool = conn
+            .prepare("SELECT hidden FROM games LIMIT 1")
+            .is_ok();
+        if !has_hidden {
+            conn.execute_batch("ALTER TABLE games ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;")?;
+        }
 
         let db = Self { conn };
         db.auto_migrate_from_json(games_root);
@@ -125,6 +140,7 @@ impl Database {
                 playtime_seconds: playtime,
                 play_count,
                 last_played,
+                hidden: false,
             };
 
             let _ = self.upsert_game(&record);
@@ -143,8 +159,9 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT dir, display_name, binary, is_windows, wine_prefix, wine_opts, icon,
                     launcher_script, desktop_entry, ignored, custom_wrapper, favorite,
-                    rating, playtime_seconds, play_count, last_played
-             FROM games",
+                    rating, playtime_seconds, play_count, last_played, hidden
+             FROM games
+             WHERE hidden = 0",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -170,6 +187,7 @@ impl Database {
                 playtime_seconds: row.get::<_, i64>(13)? as u64,
                 play_count: row.get::<_, i64>(14)? as u64,
                 last_played: row.get(15)?,
+                hidden: row.get::<_, i32>(16)? != 0,
             })
         })?;
 
@@ -184,8 +202,8 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT dir, display_name, binary, is_windows, wine_prefix, wine_opts, icon,
                     launcher_script, desktop_entry, ignored, custom_wrapper, favorite,
-                    rating, playtime_seconds, play_count, last_played
-             FROM games WHERE dir = ?1 OR LOWER(dir) = LOWER(?1)",
+                    rating, playtime_seconds, play_count, last_played, hidden
+             FROM games WHERE (dir = ?1 OR LOWER(dir) = LOWER(?1)) AND hidden = 0",
         ).ok()?;
 
         let mut rows = stmt.query_map(params![dir_key], |row| {
@@ -211,6 +229,7 @@ impl Database {
                 playtime_seconds: row.get::<_, i64>(13)? as u64,
                 play_count: row.get::<_, i64>(14)? as u64,
                 last_played: row.get(15)?,
+                hidden: row.get::<_, i32>(16)? != 0,
             })
         }).ok()?;
 
@@ -227,8 +246,8 @@ impl Database {
             "INSERT INTO games (
                 dir, display_name, binary, is_windows, wine_prefix, wine_opts, icon,
                 launcher_script, desktop_entry, ignored, custom_wrapper, favorite,
-                rating, playtime_seconds, play_count, last_played
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                rating, playtime_seconds, play_count, last_played, hidden
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(dir) DO UPDATE SET
                 display_name = excluded.display_name,
                 binary = excluded.binary,
@@ -244,7 +263,8 @@ impl Database {
                 rating = excluded.rating,
                 playtime_seconds = excluded.playtime_seconds,
                 play_count = excluded.play_count,
-                last_played = excluded.last_played",
+                last_played = excluded.last_played,
+                hidden = 0",
             params![
                 game.dir,
                 game.display_name,
@@ -262,6 +282,7 @@ impl Database {
                 game.playtime_seconds as i64,
                 game.play_count as i64,
                 game.last_played,
+                game.hidden as i32,
             ],
         )?;
 
@@ -295,12 +316,14 @@ impl Database {
         duration_seconds: u64,
         start_time: &str,
     ) -> Result<(u64, u64, u8)> {
-        let _ = self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+
+        tx.execute(
             "INSERT INTO sessions (game_dir, start_time, duration_seconds) VALUES (?1, ?2, ?3)",
             params![dir, start_time, duration_seconds as i64],
-        );
+        )?;
 
-        self.conn.execute(
+        tx.execute(
             "UPDATE games SET
                 playtime_seconds = playtime_seconds + ?1,
                 play_count = play_count + 1,
@@ -308,6 +331,8 @@ impl Database {
              WHERE dir = ?3 OR LOWER(dir) = LOWER(?3)",
             params![duration_seconds as i64, start_time, dir],
         )?;
+
+        tx.commit()?;
 
         if let Some(g) = self.get_game(dir) {
             Ok((g.playtime_seconds, g.play_count, g.rating))
@@ -318,9 +343,170 @@ impl Database {
 
     pub fn remove_game(&self, dir: &str) -> Result<()> {
         self.conn.execute(
-            "DELETE FROM games WHERE dir = ?1 OR LOWER(dir) = LOWER(?1)",
+            "UPDATE games SET hidden = 1 WHERE dir = ?1 OR LOWER(dir) = LOWER(?1)",
             params![dir],
         )?;
         Ok(())
+    }
+
+    /// Returns all dir keys (including hidden) so the onboarding wizard
+    /// doesn't re-trigger for folders that were deliberately hidden.
+    pub fn get_all_dir_keys(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT dir FROM games")?;
+        let dirs: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(dirs)
+    }
+
+    /// Returns a game record regardless of hidden status — used by tests
+    /// to verify stats survive soft delete.
+    #[cfg(test)]
+    pub fn get_game_any(&self, dir_key: &str) -> Option<GameRecord> {
+        let mut stmt = self.conn.prepare(
+            "SELECT dir, display_name, binary, is_windows, wine_prefix, wine_opts, icon,
+                    launcher_script, desktop_entry, ignored, custom_wrapper, favorite,
+                    rating, playtime_seconds, play_count, last_played, hidden
+             FROM games WHERE dir = ?1 OR LOWER(dir) = LOWER(?1)",
+        ).ok()?;
+
+        let mut rows = stmt.query_map(params![dir_key], |row| {
+            let wine_opts_json: Option<String> = row.get(5)?;
+            let wine_opts: Option<WineOpts> = wine_opts_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok());
+
+            Ok(GameRecord {
+                dir: row.get(0)?,
+                display_name: row.get(1)?,
+                binary: row.get(2)?,
+                is_windows: row.get::<_, i32>(3)? != 0,
+                wine_prefix: row.get(4)?,
+                wine_opts,
+                icon: row.get(6)?,
+                launcher_script: row.get(7)?,
+                desktop_entry: row.get(8)?,
+                ignored: row.get::<_, i32>(9)? != 0,
+                custom_wrapper: row.get::<_, i32>(10)? != 0,
+                favorite: row.get::<_, i32>(11)? != 0,
+                rating: row.get(12)?,
+                playtime_seconds: row.get::<_, i64>(13)? as u64,
+                play_count: row.get::<_, i64>(14)? as u64,
+                last_played: row.get(15)?,
+                hidden: row.get::<_, i32>(16)? != 0,
+            })
+        }).ok()?;
+
+        rows.next()?.ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_db() -> (Database, PathBuf) {
+        let id = TEST_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = PathBuf::from(format!(
+            "/tmp/run_test_{}_{:04}",
+            std::process::id(),
+            id
+        ));
+        let _ = fs::create_dir_all(&dir);
+        let db = Database::open(&dir).expect("Failed to open test DB");
+        (db, dir)
+    }
+
+    fn make_test_game(dir: &str) -> GameRecord {
+        GameRecord {
+            dir: dir.to_string(),
+            display_name: format!("Game {}", dir),
+            binary: "game.exe".to_string(),
+            is_windows: true,
+            wine_prefix: None,
+            wine_opts: None,
+            icon: Some("💻".to_string()),
+            launcher_script: Some("start_game.sh".to_string()),
+            desktop_entry: None,
+            ignored: false,
+            custom_wrapper: false,
+            favorite: false,
+            rating: 8,
+            playtime_seconds: 3600,
+            play_count: 5,
+            last_played: Some("2026-01-15T10:00:00Z".to_string()),
+            hidden: false,
+        }
+    }
+
+    #[test]
+    fn test_soft_delete_preserves_stats() {
+        let (db, _dir) = temp_db();
+        let game = make_test_game("my_game");
+        db.upsert_game(&game).unwrap();
+
+        // Verify game is visible before delete
+        let visible = db.get_all_games().unwrap();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].playtime_seconds, 3600);
+        assert_eq!(visible[0].rating, 8);
+        assert_eq!(visible[0].play_count, 5);
+
+        // Soft delete
+        db.remove_game("my_game").unwrap();
+
+        // Verify game is hidden from normal queries
+        let visible = db.get_all_games().unwrap();
+        assert!(visible.is_empty(), "Soft-deleted game should not appear in get_all_games");
+
+        // Verify stats survive — get_game_any ignores hidden flag
+        let record = db.get_game_any("my_game").expect("Soft-deleted game should still exist in DB");
+        assert_eq!(record.playtime_seconds, 3600, "playtime must survive soft delete");
+        assert_eq!(record.rating, 8, "rating must survive soft delete");
+        assert_eq!(record.play_count, 5, "play_count must survive soft delete");
+        assert_eq!(record.last_played.as_deref(), Some("2026-01-15T10:00:00Z"));
+        assert!(record.hidden, "record should be marked hidden");
+
+        // Verify dir is still in get_all_dir_keys (prevents wizard re-trigger)
+        let dirs = db.get_all_dir_keys().unwrap();
+        assert!(dirs.contains(&"my_game".to_string()));
+    }
+
+    #[test]
+    fn test_upsert_unhides_hidden_game() {
+        let (db, _dir) = temp_db();
+        let mut game = make_test_game("my_game");
+        db.upsert_game(&game).unwrap();
+
+        // Hide it
+        db.remove_game("my_game").unwrap();
+        let record = db.get_game_any("my_game").unwrap();
+        assert!(record.hidden);
+
+        // Re-add via upsert — should unhide
+        game.hidden = false;
+        db.upsert_game(&game).unwrap();
+
+        let visible = db.get_all_games().unwrap();
+        assert_eq!(visible.len(), 1, "Re-upserted game should be visible again");
+        assert!(!visible[0].hidden);
+    }
+
+    #[test]
+    fn test_remove_game_does_not_hard_delete() {
+        let (db, _dir) = temp_db();
+        let game = make_test_game("my_game");
+        db.upsert_game(&game).unwrap();
+        db.remove_game("my_game").unwrap();
+
+        // get_all_dir_keys should still contain the dir
+        let dirs = db.get_all_dir_keys().unwrap();
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0], "my_game");
     }
 }

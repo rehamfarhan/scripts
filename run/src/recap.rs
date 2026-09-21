@@ -180,15 +180,28 @@ pub fn render_post_game_recap(
     let quote = fetch_online_quote();
 
     let stars_formatted = match rating {
-        1..=5 => {
+        0 => format!("{}Unrated{}", COLOR_GREY, COLOR_RESET),
+        1..=10 => {
+            // Convert 0-10 scale to 5-star display (each star = 2 points, half-star at odd values)
+            let full_stars = (rating / 2) as usize;
+            let half_star = rating % 2 == 1;
+            let mut stars = "⭐".repeat(full_stars);
+            if half_star {
+                stars.push('✨');
+            }
             let label = match rating {
-                5 => "Masterpiece",
-                4 => "Great",
-                3 => "Good",
-                2 => "Mediocre",
-                _ => "Bad",
+                10 => "Masterpiece",
+                9 => "Exceptional",
+                8 => "Great",
+                7 => "Very Good",
+                6 => "Good",
+                5 => "Decent",
+                4 => "Mediocre",
+                3 => "Poor",
+                2 => "Bad",
+                _ => "Terrible",
             };
-            format!("{}  {}({}/5 • {}){}", "⭐".repeat(rating as usize), COLOR_GREY, rating, label, COLOR_RESET)
+            format!("{}  {}({}/10 • {}){}", stars, COLOR_GREY, rating, label, COLOR_RESET)
         }
         _ => format!("{}Unrated{}", COLOR_GREY, COLOR_RESET),
     };

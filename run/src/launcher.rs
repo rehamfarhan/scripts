@@ -21,7 +21,7 @@ pub fn launch_game_attached(
     let wine_prefix = game.wine_prefix.as_ref().map(PathBuf::from);
 
     // Ensure launcher script is generated and up to date
-    let script_path = create_launcher_script(
+    let (script_path, _gen_result) = create_launcher_script(
         &folder_path,
         &binary_path,
         &game.display_name,
@@ -70,7 +70,9 @@ pub fn launch_game_attached(
     let _ = execute!(stdout(), Show);
     let _ = disable_raw_mode();
 
-    // Keyd safety cleanup
+    // Intentional redundant keyd cleanup — safety net for when the shell trap
+    // in start_game.sh cannot fire (e.g. game killed with SIGKILL, shell already dead).
+    // The shell trap handles normal exit; this handles abnormal exit. Do not remove.
     if let Some(ref opts) = game.wine_opts {
         if opts.keyd_remap.is_some() {
             let _ = Command::new("keyd")

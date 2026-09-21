@@ -10,7 +10,14 @@ use crate::config::{REGISTRY_FILENAME, STATS_FILENAME};
 pub struct WineOpts {
     pub resolution: Option<String>,
     pub dxvk_hud: Option<String>,
+    /// Windows version for Wine (e.g. "win10", "win7", "win11").
+    /// Stored for future use — not yet wired into start_game.sh generation.
+    /// The settings modal lets users set this, but the generated launcher script
+    /// does not export it or pass it to Wine.
     pub win_ver: Option<String>,
+    /// SDL video driver override ("x11" or "wayland").
+    /// Only effective for Linux-native SDL games. When set for Windows games,
+    /// it is stored but has no effect — Wine does not use SDL for display.
     pub sdl_driver: Option<String>,
     pub keyd_remap: Option<String>,
 }

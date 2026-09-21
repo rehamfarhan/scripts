@@ -10,7 +10,7 @@ A blazing-fast, nerdy-cool TUI game launcher, telemetry inspector, and session t
 - **Framework**: [Ratatui](https://github.com/ratatui/ratatui) 0.30 + [Crossterm](https://github.com/crossterm-rs/crossterm) 0.29
 - **Startup Latency**: <2 ms (compiled native ELF binary)
 - **Target Command**: `run`
-- **Configuration Files**: `~/Games/.run_registry.json`, `~/Games/.run_stats.json`
+- **Storage**: SQLite at `~/Games/.run.db` (legacy `~/Games/.run_registry.json` and `.run_stats.json` are auto-migrated on first run, then renamed to `.bak`)
 
 ---
 
@@ -32,9 +32,11 @@ A blazing-fast, nerdy-cool TUI game launcher, telemetry inspector, and session t
   - Injects cleanup traps in `start_game.sh` and launcher safety fallbacks so default keyboard bindings are always restored on exit.
 - **Attached Process Execution & Session Tracking**:
   - Clean terminal handoff: streams game stdout/stderr directly to terminal.
-  - Wall-clock session duration tracking saved automatically to `.run_stats.json`.
+  - Wall-clock session duration tracking saved automatically to `.run.db`.
 - **Centered Post-Game Session Recap Screen**:
-  - Color-coded recap card with rounded borders, sparkles (`✨`), duration, total playtime, rating, session end date, platform, and online stoic/gaming quotes (fetched asynchronously with offline fallbacks).
+  - Color-coded recap card with rounded borders, sparkles (`✨`), duration, total playtime, rating, session end date, platform, and online stoic/gaming quotes (fetched with a short timeout and offline fallback).
+- **Launcher Script Generation**:
+  - `start_game.sh` is generated with a marked env section (between `RUN-MANAGED:ENV` comment markers) that settings changes patch in-place. Manual edits outside that section are preserved across patches. `Ctrl+R` is the full-reset escape hatch — it regenerates the script from scratch, discarding all manual edits.
 - **Quick-Launch Mode (`run <query>`)**:
   - Instant direct launch (<5ms) without opening the TUI dashboard:
     ```bash
@@ -55,7 +57,7 @@ cargo build --release
 Link the executable using `scrlink` or symlink directly:
 
 ```bash
-sudo ln -sf "$(pwd)/run.sh" /usr/local/bin/run
+ln -sf "$(pwd)/target/debug/run" ~/.local/bin/run
 ```
 
 ---
@@ -66,7 +68,7 @@ sudo ln -sf "$(pwd)/run.sh" /usr/local/bin/run
 | :--- | :--- |
 | `Enter` | Launch selected game in foreground |
 | `r` | Rate game (0 - 5 Stars modal) |
-| `k` | Keyboard Patch (keyd remap modal) |
+| `p` / `P` | Keyboard Patch (keyd remap modal) |
 | `c` | Execution & Video Driver settings |
 | `e` | Edit launcher wrapper script in `$EDITOR` |
 | `d` | Create system `.desktop` application shortcut |
@@ -74,5 +76,6 @@ sudo ln -sf "$(pwd)/run.sh" /usr/local/bin/run
 | `m` | Change main executable binary |
 | `n` | Rename game entry |
 | `x` / `Delete` | Remove launcher entry (preserves playtime stats) |
+| `Ctrl+R` | Reset launcher script (regenerates start_game.sh, with confirmation) |
 | `/` | Focus real-time search filter |
 | `q` / `Esc` | Quit |

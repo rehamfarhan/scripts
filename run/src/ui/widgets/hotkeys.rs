@@ -46,6 +46,8 @@ pub fn render_hotkeys(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("Rename   ", Style::default().fg(Color::White)),
             Span::styled("[x] ", style_keybind()),
             Span::styled("Delete   ", Style::default().fg(Color::White)),
+            Span::styled("[Ctrl+R] ", style_keybind()),
+            Span::styled("Reset Script  ", Style::default().fg(Color::White)),
             Span::styled("[q] ", style_keybind()),
             Span::styled("Quit", Style::default().fg(Color::White)),
         ]),

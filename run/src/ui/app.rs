@@ -85,6 +85,9 @@ pub enum ActiveModal {
         search_query: String,
         is_searching: bool, // Default true; Esc toggles to selection mode
     },
+    ResetScriptConfirmation {
+        game_name: String,
+    },
 }
 
 pub struct App {
@@ -280,12 +283,13 @@ impl App {
     }
 
     pub fn check_unregistered_folders(&mut self) {
+        // Include hidden dirs so a hidden game's folder doesn't re-trigger the wizard
         let existing_dirs: std::collections::HashSet<String> = self
             .db
-            .get_all_games()
+            .get_all_dir_keys()
             .unwrap_or_default()
             .into_iter()
-            .map(|g| g.dir.to_lowercase())
+            .map(|d| d.to_lowercase())
             .collect();
 
         let mut unregistered = Vec::new();
