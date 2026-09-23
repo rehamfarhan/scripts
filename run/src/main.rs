@@ -10,7 +10,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use std::path::PathBuf;
 
-use crate::config::default_games_dir;
+use crate::config::resolve_games_dir;
 use crate::db::Database;
 use crate::launcher::launch_game_attached;
 
@@ -39,12 +39,7 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    let games_root = games_dir
-        .unwrap_or_else(default_games_dir)
-        .canonicalize()
-        .unwrap_or_else(|_| default_games_dir());
-
-    let _ = std::fs::create_dir_all(&games_root);
+    let games_root = resolve_games_dir(games_dir)?;
 
     // Quick-launch mode
     if let Some(ref q) = query {
