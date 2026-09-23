@@ -18,10 +18,10 @@ A blazing-fast, nerdy-cool TUI game launcher, telemetry inspector, and session t
 
 - **Dual-Pane Cyber-Dashboard**:
   - **Left Pane (Library)**: Clean, focused game list with platform icons (`🐧`/`💻`), titles, and real-time fuzzy search filtering (`/`).
-  - **Right Top Pane (Telemetry & Specs Inspector)**: Showcases star ratings (`⭐⭐⭐⭐ (4/5 • Great)`), cumulative playtime (`14.2h`), total session count (`Session #7`), last played timestamp (`2h ago`), game folder, executable path, file size, Wine/SDL drivers, and active `keyd` keyboard patch.
+  - **Right Top Pane (Telemetry & Specs Inspector)**: Showcases star ratings (`⭐⭐⭐⭐⬛ (8/10 • Great)`), cumulative playtime (`14.2h`), total session count (`Session #7`), last played timestamp (`2h ago`), game folder, executable path, file size, Wine/SDL drivers, and active `keyd` keyboard patch.
   - **Right Bottom Pane (Quick Actions & Hotkeys)**: Full keybinding cheatsheet and tips ticker.
 - **In-Place Modal Dialogs**: No screen flickering or nested sub-shells. In-terminal modals for:
-  - ⭐ **Rate Game**: 0 to 5 golden star selector.
+  - ⭐ **Rate Game**: 0 to 10 star rating selector (0 = Unrated).
   - ⌨️ **Keyboard Patches (keyd)**: Zero-sudo runtime key remapping (e.g. Left Shift -> Left Ctrl for broken Ctrl keys) with automatic cleanup traps on exit.
   - ⚙️ **Execution Settings**: Custom Wine prefix, Virtual Desktop resolution, DXVK Vulkan HUD, and SDL video driver overrides.
   - 🛠️ **Change Main Binary**: Heuristic binary scanner with recommended badges (`⭐ Recommended Main Binary`).
@@ -67,7 +67,10 @@ ln -sf "$(pwd)/target/debug/run" ~/.local/bin/run
 | Key | Action |
 | :--- | :--- |
 | `Enter` | Launch selected game in foreground |
-| `r` | Rate game (0 - 5 Stars modal) |
+| `r` | Rate game (0 - 10 Stars modal) |
+| `f` | Toggle favorite (pin to top) |
+| `s` / `S` | Cycle sort field / toggle ascending-descending |
+| `i` | Toggle the quick-actions panel |
 | `p` / `P` | Keyboard Patch (keyd remap modal) |
 | `c` | Execution & Video Driver settings |
 | `e` | Edit launcher wrapper script in `$EDITOR` |
