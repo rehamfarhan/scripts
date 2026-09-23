@@ -178,10 +178,20 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(&game.binary, style_meta_val()),
             Span::styled(format!("  (Size: {})", bin_size_str), Style::default().fg(COLOR_GREY)),
         ]),
-        Line::from(vec![
-            Span::styled("  🐧 SDL Video Driver: ", style_meta_label()),
-            Span::styled(sdl_driver, style_meta_val()),
-        ]),
+        if game.is_windows {
+            Line::from(vec![
+                Span::styled("  🐧 SDL Video Driver: ", style_meta_label()),
+                Span::styled(
+                    format!("{} (inactive — Wine)", sdl_driver),
+                    style_meta_val(),
+                ),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("  🐧 SDL Video Driver: ", style_meta_label()),
+                Span::styled(sdl_driver, style_meta_val()),
+            ])
+        },
         if game.is_windows {
             Line::from(vec![
                 Span::styled("  🍷 Wine Prefix:      ", style_meta_label()),
