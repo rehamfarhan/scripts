@@ -261,7 +261,10 @@ fn render_exec_modal(
         let items = [
             format!("Virtual Desktop Resolution: {}", current_res),
             format!("DXVK Performance HUD: {}", current_hud),
-            format!("Wine SDL Video Driver: {}", current_sdl),
+            format!(
+                "SDL Video Driver: {} (Linux only — no effect under Wine)",
+                current_sdl
+            ),
         ];
 
         for (idx, label) in items.iter().enumerate() {

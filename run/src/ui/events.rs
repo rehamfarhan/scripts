@@ -570,13 +570,19 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                     },
                 }
             } else {
+                // Windows games: 3 categories (0..=2), one row per category, with the
+                // selected row's value cycled in-place on Enter/Space/'l'. The modal
+                // stays open so the user can cycle multiple options before Esc.
+                // NOTE: win_ver and sdl_driver for Windows games are stored but not yet
+                // consumed by the generated start_game.sh — they are inert placeholders
+                // for future Wine integration. See WineOpts doc comments in model.rs.
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => ActiveModal::None,
                     KeyCode::Char('k') | KeyCode::Up => {
                         if selected_opt > 0 {
                             selected_opt -= 1;
                         } else {
-                            selected_opt = 6;
+                            selected_opt = 2;
                         }
                         ActiveModal::ExecutionSettings {
                             selected_opt,
@@ -585,7 +591,7 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                         }
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
-                        selected_opt = (selected_opt + 1) % 7;
+                        selected_opt = (selected_opt + 1) % 3;
                         ActiveModal::ExecutionSettings {
                             selected_opt,
                             is_windows,
@@ -601,23 +607,32 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                     }
                     KeyCode::Char('G') | KeyCode::End => {
                         ActiveModal::ExecutionSettings {
-                            selected_opt: 6,
+                            selected_opt: 2,
                             is_windows,
                             opts,
                         }
                     }
-                    // NOTE: win_ver and sdl_driver for Windows games are stored but not yet
-                    // consumed by the generated start_game.sh — they are inert placeholders
-                    // for future Wine integration. See WineOpts doc comments in model.rs.
                     KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('l') => {
                         match selected_opt {
-                            0 => opts.resolution = None,
-                            1 => opts.resolution = Some("1920x1080".to_string()),
-                            2 => opts.resolution = Some("1280x720".to_string()),
-                            3 => opts.dxvk_hud = None,
-                            4 => opts.dxvk_hud = Some("fps".to_string()),
-                            5 => opts.dxvk_hud = Some("full".to_string()),
-                            6 => {
+                            // Virtual Desktop Resolution: Native -> 1920x1080 -> 1280x720 -> Native
+                            0 => {
+                                opts.resolution = match opts.resolution.as_deref() {
+                                    None => Some("1920x1080".to_string()),
+                                    Some("1920x1080") => Some("1280x720".to_string()),
+                                    _ => None,
+                                }
+                            }
+                            // DXVK Performance HUD: Off -> fps -> full -> Off
+                            1 => {
+                                opts.dxvk_hud = match opts.dxvk_hud.as_deref() {
+                                    None => Some("fps".to_string()),
+                                    Some("fps") => Some("full".to_string()),
+                                    _ => None,
+                                }
+                            }
+                            // SDL driver is Linux-only; under Wine it's stored but inert.
+                            // Toggle Auto <-> x11 for informational purposes only.
+                            2 => {
                                 if opts.sdl_driver.as_deref() == Some("x11") {
                                     opts.sdl_driver = None;
                                 } else {
@@ -652,7 +667,12 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                             }
                             app.reload_games();
                         }
-                        ActiveModal::None
+                        // Remain open: cycling applies immediately, user can keep cycling.
+                        ActiveModal::ExecutionSettings {
+                            selected_opt,
+                            is_windows,
+                            opts,
+                        }
                     }
                     _ => ActiveModal::ExecutionSettings {
                         selected_opt,
@@ -1415,6 +1435,14 @@ mod tests {
     use super::*;
 
     fn make_app_with_game() -> (tempfile::TempDir, App) {
+        make_app_with_game_impl(false)
+    }
+
+    fn make_app_with_windows_game() -> (tempfile::TempDir, App) {
+        make_app_with_game_impl(true)
+    }
+
+    fn make_app_with_game_impl(is_windows: bool) -> (tempfile::TempDir, App) {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf());
 
@@ -1424,8 +1452,8 @@ mod tests {
         let game = GameRecord {
             dir: "test_game".into(),
             display_name: "Test Game".into(),
-            binary: "game.exe".into(),
-            is_windows: false,
+            binary: if is_windows { "game.exe" } else { "game" }.into(),
+            is_windows,
             wine_prefix: None,
             wine_opts: None,
             icon: None,
@@ -1478,5 +1506,101 @@ mod tests {
                 std::mem::discriminant(other)
             ),
         }
+    }
+
+    fn exec_modal_selected(app: &App) -> usize {
+        match &app.active_modal {
+            ActiveModal::ExecutionSettings { selected_opt, .. } => *selected_opt,
+            other => panic!(
+                "expected ExecutionSettings modal, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+    }
+
+    fn exec_modal_opts(app: &App) -> WineOpts {
+        match &app.active_modal {
+            ActiveModal::ExecutionSettings { opts, .. } => opts.clone(),
+            other => panic!(
+                "expected ExecutionSettings modal, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+    }
+
+    #[test]
+    fn windows_exec_settings_cycles_three_rows_in_place() {
+        let (_dir, mut app) = make_app_with_windows_game();
+
+        // Open Execution Settings for the Windows game.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        match &app.active_modal {
+            ActiveModal::ExecutionSettings {
+                is_windows,
+                selected_opt,
+                ..
+            } => {
+                assert!(*is_windows, "should open for the Windows game");
+                assert_eq!(*selected_opt, 0);
+            }
+            other => panic!(
+                "'c' should open ExecutionSettings, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+
+        // Hammer 'j' far beyond the old 7-row range: selection must never exceed 2.
+        for _ in 0..20 {
+            handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+            let sel = exec_modal_selected(&app);
+            assert!(sel <= 2, "selected_opt {} must never exceed 2", sel);
+        }
+
+        // 'g' -> row 0; 'k' from row 0 wraps to 2; 'G' -> row 2.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+        assert_eq!(exec_modal_selected(&app), 0);
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert_eq!(exec_modal_selected(&app), 2);
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
+        assert_eq!(exec_modal_selected(&app), 2);
+
+        // Row 2 (SDL driver): Auto -> x11 -> Auto. Cycling keeps the modal open
+        // and the applied value lands in the DB record, not just the modal state.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(matches!(app.active_modal, ActiveModal::ExecutionSettings { .. }), "modal should stay open after cycling");
+        assert_eq!(exec_modal_opts(&app).sdl_driver.as_deref(), Some("x11"));
+        assert_eq!(
+            app.selected_game()
+                .and_then(|g| g.wine_opts.as_ref())
+                .and_then(|o| o.sdl_driver.as_deref()),
+            Some("x11"),
+            "cycled SDL value must be persisted to the game record"
+        );
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(exec_modal_opts(&app).sdl_driver.as_deref(), None);
+
+        // Row 1 (DXVK HUD): Off -> fps -> full -> Off.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert_eq!(exec_modal_selected(&app), 1);
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(exec_modal_opts(&app).dxvk_hud.as_deref(), Some("fps"));
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(exec_modal_opts(&app).dxvk_hud.as_deref(), Some("full"));
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(exec_modal_opts(&app).dxvk_hud.as_deref(), None);
+
+        // Row 0 (Virtual Desktop Resolution): Native -> 1920x1080 -> 1280x720 -> Native.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert_eq!(exec_modal_selected(&app), 0);
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(exec_modal_opts(&app).resolution.as_deref(), Some("1920x1080"));
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(exec_modal_opts(&app).resolution.as_deref(), Some("1280x720"));
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(exec_modal_opts(&app).resolution.as_deref(), None);
+
+        // Esc closes the modal.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(app.active_modal, ActiveModal::None));
     }
 }
