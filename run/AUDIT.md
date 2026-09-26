@@ -110,11 +110,17 @@ once (which triggers the onboarding wizard / folder scan).
 
 ## 5. Minor items (not blocking)
 
+- **Status**: done (three fixed items in `1d9c461`; `win_ver` informational only)
+
 - `ChangeBinary` Enter handler ignores `ScriptGenerationResult::SkippedCorruptMarkers`
-  → toasts success while the script stays corrupt.
+  → toasts success while the script stays corrupt. — **fixed** (`1d9c461`):
+  warns "not applied … use Ctrl+R" instead, regression-tested.
 - Inspector's `# CUSTOM_WRAPPER` content check is dead code — the marker is never
-  emitted by the generator; `is_custom` relies solely on the DB flag.
+  emitted by the generator; `is_custom` relies solely on the DB flag. — **fixed**
+  (`1d9c461`): dead branch and unused `std::fs` import removed.
 - `launch_game_attached` records a session (play_count bump, 0s) even when the
-  game crashes / fails to launch.
+  game crashes / fails to launch. — **fixed** (`1d9c461`): launches shorter
+  than a 10s floor are not recorded (bad CWD / crash-on-start), long sessions
+  that end in a crash still count; boundary-tested.
 - `win_ver` stored-but-unused is documented and the UI now labels SDL-driver as
   inert under Wine — informational only, not a bug.
