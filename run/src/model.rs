@@ -67,7 +67,7 @@ impl Default for GameRegistry {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GameStatEntry {
     #[serde(default)]
     pub rating: u8,
@@ -76,17 +76,6 @@ pub struct GameStatEntry {
     #[serde(default)]
     pub play_count: u64,
     pub last_played: Option<String>,
-}
-
-impl Default for GameStatEntry {
-    fn default() -> Self {
-        Self {
-            rating: 0,
-            playtime_seconds: 0,
-            play_count: 0,
-            last_played: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,11 +231,11 @@ pub fn format_star_rating(rating: u8) -> String {
     for i in 0..5 {
         let threshold = (i + 1) * 2;
         if r >= threshold {
-            slots.push_str("🌟");
+            slots.push('🌟');
         } else if r == threshold - 1 {
             slots.push_str("⭐️");
         } else {
-            slots.push_str("⬛");
+            slots.push('⬛');
         }
     }
 

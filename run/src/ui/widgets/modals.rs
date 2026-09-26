@@ -81,13 +81,15 @@ pub fn render_modals(f: &mut Frame, app: &App, area: Rect) {
         } => {
             render_wizard_modal(
                 f,
-                folders,
-                *current_idx,
-                binaries,
-                filtered_indices,
-                *selected_bin,
-                search_query,
-                *is_searching,
+                WizardView {
+                    folders,
+                    current_idx: *current_idx,
+                    binaries,
+                    filtered_indices,
+                    selected_bin: *selected_bin,
+                    search_query,
+                    is_searching: *is_searching,
+                },
                 area,
             );
         }
@@ -437,17 +439,29 @@ fn render_rename_modal(f: &mut Frame, input: &str, area: Rect) {
     f.render_widget(widget, popup_area);
 }
 
-fn render_wizard_modal(
-    f: &mut Frame,
-    folders: &[std::path::PathBuf],
+/// All state the new-game wizard renderer needs, bundled so the call stays at
+/// 3 arguments instead of 9 (clippy::too_many_arguments). Purely a view —
+/// no mutation, all borrows tie back to `App`.
+struct WizardView<'a> {
+    folders: &'a [std::path::PathBuf],
     current_idx: usize,
-    binaries: &[std::path::PathBuf],
-    filtered_indices: &[usize],
+    binaries: &'a [std::path::PathBuf],
+    filtered_indices: &'a [usize],
     selected_bin: usize,
-    search_query: &str,
+    search_query: &'a str,
     is_searching: bool,
-    area: Rect,
-) {
+}
+
+fn render_wizard_modal(f: &mut Frame, view: WizardView<'_>, area: Rect) {
+    let WizardView {
+        folders,
+        current_idx,
+        binaries,
+        filtered_indices,
+        selected_bin,
+        search_query,
+        is_searching,
+    } = view;
     let popup_area = centered_rect(80, 70, area);
     f.render_widget(Clear, popup_area);
 

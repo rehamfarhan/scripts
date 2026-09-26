@@ -270,7 +270,7 @@ fn generate_frozen_lines(
 /// Returns Ok(true) if patched, Ok(false) if markers were corrupt (file untouched).
 fn patch_env_block(
     existing_content: &str,
-    new_block: &Vec<String>,
+    new_block: &[String],
 ) -> Result<String, ()> {
     let start_count = existing_content.matches(ENV_BLOCK_START).count();
     let end_count = existing_content.matches(ENV_BLOCK_END).count();

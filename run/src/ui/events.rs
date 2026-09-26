@@ -346,7 +346,7 @@ fn filter_binary_indices(binaries: &[PathBuf], game_dir: &Path, query: &str) -> 
             scored.push((idx, score));
         }
     }
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
     scored.into_iter().map(|(idx, _)| idx).collect()
 }
 
