@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""DEPRECATED — do not use.
+
+This was the pre-Rust launch shim. Since the Rust rewrite, ``run.sh`` has been
+the sole entry point (it auto-builds the release binary, then execs
+``target/release/run``). The ``run`` command on PATH symlinks to ``run.sh`` too.
+
+Kept only as historical reference; ``run_py_legacy.py`` holds the even older
+pre-Rust Python implementation.
+"""
+
+import sys
+
+print(
+    "run.py is deprecated and no longer functions as a launcher.\n"
+    "Use ./run.sh (or just `run`), which builds and execs target/release/run.",
+    file=sys.stderr,
+)
+sys.exit(1)

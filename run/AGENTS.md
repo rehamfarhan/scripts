@@ -4,8 +4,8 @@ Fast, single-binary TUI game launcher/session tracker. Ratatui + Crossterm UI, S
 
 ## Build, test, lint
 
-- Build: `cargo build` (dev) / `cargo build --release` (what actually ships — see `run.py`, which execs `target/release/run`)
-- Dev binary is symlinked at `~/.local/bin/run` → `target/debug/run` (in PATH). Re-run `ln -sf target/debug/run ~/.local/bin/run` if the symlink is broken.
+- Build: `cargo build` (dev) / `cargo build --release` (what actually ships — see `run.sh`, which auto-builds and execs `target/release/run`)
+- `run` on PATH is `~/.local/bin/run`, symlinked to `run.sh` (which execs the **release** binary; `~/.local/bin` is on PATH). Re-run `ln -sf /home/directpass/scripts/run/run.sh ~/.local/bin/run` if the symlink is broken. For a dev build during development use `cargo run` or `./target/debug/run` directly — don't repoint the symlink at the debug binary.
 - Test: `cargo test` — unit tests live inline in `#[cfg(test)] mod tests` at the bottom of `db.rs`, `scanner.rs`, `ui/events.rs`. They use `tempfile` for isolated dirs/DBs — never write a test that touches the real `~/Games` or `~/.config`.
 - Lint: `cargo clippy --all-targets -- -D warnings` before considering any change done.
 - Single test: `cargo test <test_name>`
@@ -53,6 +53,6 @@ Fast, single-binary TUI game launcher/session tracker. Ratatui + Crossterm UI, S
 
 ## Things NOT to do
 
-- Don't touch `run_py_legacy.py` — kept only as historical reference for the pre-Rust implementation, not part of the build.
+- Don't touch `run_py_legacy.py` — kept only as historical reference for the pre-Rust implementation, not part of the build. Same for `run.py.deprecated` (renamed from `run.py`): the launcher entry point is `run.sh`, and `~/.local/bin/run` symlinks to it.
 - Don't add a new persisted JSON format; SQLite (`db.rs`) is the only current storage. `model::GameRegistry`/`GameStats` exist solely to deserialize old files during one-time migration.
 - Don't reformat files wholesale; keep diffs scoped to the change being made.

@@ -53,16 +53,18 @@ A blazing-fast, nerdy-cool TUI game launcher, telemetry inspector, and session t
 
 ## 🚀 Building & Installation
 
-Compile the release binary:
+Compile the release binary (what actually ships — `run.sh` builds it for you if
+it's missing):
 
 ```bash
 cargo build --release
 ```
 
-Link the executable using `scrlink` or symlink directly:
+Make `run` resolve to the release launcher with one symlink (`run.sh`
+auto-builds on first use, then execs `target/release/run`):
 
 ```bash
-ln -sf "$(pwd)/target/debug/run" ~/.local/bin/run
+ln -sf "$(pwd)/run.sh" ~/.local/bin/run
 ```
 
 ---
