@@ -11,6 +11,16 @@ use crate::db::{Database, GameRecord};
 use crate::recap::render_post_game_recap;
 use crate::scanner::create_launcher_script;
 
+/// A launch shorter than this (seconds) is treated as a failure to start —
+/// bad CWD, missing dependency, crash-on-start — and is NOT recorded as a
+/// play session, so playtime / times-played stay honest. A long session that
+/// ends in a crash still counts.
+const MIN_SESSION_SECS: u64 = 10;
+
+fn should_record_session(elapsed_sec: u64) -> bool {
+    elapsed_sec >= MIN_SESSION_SECS
+}
+
 pub fn launch_game_attached(
     games_root: &Path,
     game: &GameRecord,
@@ -92,8 +102,12 @@ pub fn launch_game_attached(
         println!("\n\x1b[33m⚠️ Game exited with {}\x1b[0m", code_str);
     }
 
-    // Update playtime statistics in SQLite database
-    let (total_seconds, play_count, rating) = if let Ok(db) = Database::open(games_root) {
+    // Update playtime statistics in SQLite database — but only for a real
+    // session. A launch that died before the floor (crash-on-start, bad CWD)
+    // shouldn't inflate playtime or times-played.
+    let (total_seconds, play_count, rating) = if !should_record_session(elapsed_sec) {
+        (game.playtime_seconds, game.play_count, game.rating)
+    } else if let Ok(db) = Database::open(games_root) {
         db.record_session(&game.dir, elapsed_sec, &iso_now)
             .unwrap_or((game.playtime_seconds + elapsed_sec, game.play_count + 1, game.rating))
     } else {
@@ -124,4 +138,23 @@ pub fn launch_game_attached(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_record_session;
+
+    #[test]
+    fn launch_shorter_than_floor_is_not_recorded() {
+        assert!(!should_record_session(0));
+        assert!(!should_record_session(9));
+    }
+
+    #[test]
+    fn launch_at_floor_or_longer_is_recorded() {
+        assert!(should_record_session(10));
+        assert!(should_record_session(3600));
+        // A 2-hour session that ends in a crash still counts.
+        assert!(should_record_session(7200));
+    }
 }

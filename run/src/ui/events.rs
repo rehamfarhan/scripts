@@ -846,16 +846,25 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
                                 updated.is_windows = is_windows;
                                 updated.icon = Some(if is_windows { "💻".to_string() } else { "🐧".to_string() });
 
-                                let _ = create_launcher_script(
+                                let _ = app.db.upsert_game(&updated);
+                                match create_launcher_script(
                                     &folder,
                                     rel,
                                     &game.display_name,
                                     is_windows,
                                     game.wine_prefix.as_deref().map(Path::new),
                                     game.wine_opts.as_ref(),
-                                );
-                                let _ = app.db.upsert_game(&updated);
-                                app.set_toast(format!("✓ Main binary set to '{}'", rel.display()));
+                                ) {
+                                    Ok((_, ScriptGenerationResult::SkippedCorruptMarkers)) => {
+                                        app.set_toast(format!(
+                                            "⚠️ Binary change not applied — start_game.sh markers are missing or corrupted for '{}'. Use Ctrl+R to reset the script.",
+                                            game.display_name
+                                        ));
+                                    }
+                                    _ => {
+                                        app.set_toast(format!("✓ Main binary set to '{}'", rel.display()));
+                                    }
+                                }
                             }
                         }
                     }
@@ -1644,5 +1653,48 @@ mod tests {
         // Ctrl+r still opens the reset confirmation (existing binding kept).
         handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
         assert!(matches!(app.active_modal, ActiveModal::ResetScriptConfirmation { .. }));
+    }
+
+    #[test]
+    fn change_binary_warns_when_markers_are_corrupt() {
+        // Seed a start_game.sh with corrupt managed markers (start marker
+        // present, end marker missing) so regeneration must be refused.
+        let (dir, mut app) = make_app_with_game();
+        let game_dir = dir.path().join("test_game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        std::fs::write(
+            game_dir.join("start_game.sh"),
+            "#!/bin/sh\n# >>> RUN-MANAGED:ENV — auto-updated on settings change, do not hand-edit between these lines >>>\nexec \"$@\"\n",
+        )
+        .unwrap();
+
+        let binaries = vec![game_dir.join("game")];
+        let n = binaries.len();
+        app.active_modal = ActiveModal::ChangeBinary {
+            binaries,
+            filtered_indices: (0..n).collect(),
+            selected_bin: 0,
+            search_query: String::new(),
+        };
+
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Script was left untouched (patch refused), the DB still records the
+        // chosen binary, and the toast warns instead of claiming success.
+        let script = std::fs::read_to_string(game_dir.join("start_game.sh")).unwrap();
+        assert_eq!(
+            script.matches("# <<< RUN-MANAGED:ENV <<<").count(),
+            0,
+            "script must not be regenerated"
+        );
+        assert_eq!(
+            app.selected_game().map(|g| g.binary.as_str()),
+            Some("game"),
+            "DB records the chosen binary even when the script patch is refused"
+        );
+        let toast = app.toast_text().expect("a toast must be shown");
+        assert!(toast.contains("not applied"), "toast must warn, got: {toast}");
+        assert!(toast.contains("Ctrl+R"), "toast must name the reset escape hatch");
+        assert!(!toast.contains('✓'), "toast must not claim success: {toast}");
     }
 }

@@ -3,7 +3,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
-use std::fs;
 
 use crate::model::{format_last_played, format_playtime, format_star_rating};
 use crate::scanner::format_file_size;
@@ -40,16 +39,7 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
         .map(|m| format_file_size(m.len()))
         .unwrap_or_else(|_| "Unknown".to_string());
 
-    let is_custom = game.custom_wrapper || {
-        let script_file = folder_path.join("start_game.sh");
-        if script_file.is_file() {
-            fs::read_to_string(&script_file)
-                .map(|c| c.contains("# CUSTOM_WRAPPER"))
-                .unwrap_or(false)
-        } else {
-            false
-        }
-    };
+    let is_custom = game.custom_wrapper;
 
     let platform_label = if game.is_windows {
         "Windows (Wine / Proton)"
