@@ -93,6 +93,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
     }
 
     // 3. Main Dashboard Navigation & Hotkeys
+    // Any Control combo is resolved here exclusively: known ones act, all others
+    // (Ctrl+C, Ctrl+X, ...) are deliberate no-ops so bare hotkeys can never fire
+    // with Ctrl held (raw mode delivers Ctrl+X as Char('x')+CONTROL). Alt+letter
+    // is likewise never a bare hotkey. SHIFT deliberately is NOT gated — 'S' /
+    // Shift+s and 'P' depend on it passing through to the match below.
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             KeyCode::Char('d') => {
@@ -119,8 +124,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
                 }
                 return;
             }
-            _ => {}
+            _ => return,
         }
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        return;
     }
 
     match key.code {
@@ -1602,5 +1610,39 @@ mod tests {
         // Esc closes the modal.
         handle_key_event(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(app.active_modal, ActiveModal::None));
+    }
+
+    #[test]
+    fn ctrl_or_alt_letter_never_triggers_bare_hotkeys() {
+        let (_dir, mut app) = make_app_with_game();
+
+        // Ctrl+X must NOT soft-delete the game.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+        assert_eq!(app.all_games.len(), 1, "Ctrl+X must not remove the game");
+        assert!(matches!(app.active_modal, ActiveModal::None));
+
+        // Ctrl+E must NOT open the editor.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert!(app.needs_editor.is_none(), "Ctrl+E must not launch the editor");
+
+        // Ctrl+C is a deliberate no-op: no quit, no modal.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(!app.should_quit, "Ctrl+C must not quit");
+        assert!(matches!(app.active_modal, ActiveModal::None), "Ctrl+C must not open a modal");
+
+        // Alt+X must NOT soft-delete either.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT));
+        assert_eq!(app.all_games.len(), 1, "Alt+X must not remove the game");
+
+        // Plain bare hotkeys still work.
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert!(
+            app.selected_game().map(|g| g.favorite).unwrap_or(false),
+            "plain 'f' must still toggle favorite"
+        );
+
+        // Ctrl+r still opens the reset confirmation (existing binding kept).
+        handle_key_event(&mut app, KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert!(matches!(app.active_modal, ActiveModal::ResetScriptConfirmation { .. }));
     }
 }
