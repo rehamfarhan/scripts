@@ -95,7 +95,7 @@ once (which triggers the onboarding wizard / folder scan).
 - **Severity**: medium (blocks the project's own "clippy clean" rule)
 - **Files**: `src/model.rs` (81, 245, 249), `src/scanner.rs` (273),
   `src/ui/events.rs` (341), `src/ui/widgets/modals.rs` (440)
-- **Status**: open
+- **Status**: done (fixed in `6570679`, clippy gate green end-to-end)
 
 **Errors**
 | Location | Clippy lint | Fix |
