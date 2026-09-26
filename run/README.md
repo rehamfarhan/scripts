@@ -43,6 +43,11 @@ A blazing-fast, nerdy-cool TUI game launcher, telemetry inspector, and session t
     run balatro
     run rerun
     ```
+  - **Stays instant by design**: quick-launch matches only games already in the
+    SQLite library and never scans the games directory. New folders are
+    discovered the next time the TUI dashboard is opened (onboarding wizard /
+    folder scan) — so after dropping a new game into `~/Games`, run the TUI once
+    before expecting `run <name>` to find it.
 
 ---
 

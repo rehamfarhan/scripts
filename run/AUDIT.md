@@ -70,10 +70,13 @@ but the UI claims success without doing anything.
 
 ## 3. Quick-launch never discovers new folders
 
-- **Severity**: medium (documented gotcha #3; possibly intentional)
+- **Severity**: medium (confirmed-intended — quick-launch stays instant)
 - **Files**: `src/main.rs` (quick-launch path), `src/ui/app.rs`
   (`check_unregistered_folders` only runs in `App::new`)
-- **Status**: open
+- **Status**: **wontfix** — confirmed-intended by maintainer (2026-09). Quick-launch
+  is deliberately DB-only to stay instant; new folders are discovered on the next
+  TUI launch. Documented in `AGENTS.md` (gotcha #3) and `README.md`
+  (Quick-Launch Mode). Don't add a scan to the hot path.
 
 **Problem.** `run <query>` fuzzy-matches only against the SQLite DB. A newly
 added game folder is invisible to quick-launch until the TUI has been opened
