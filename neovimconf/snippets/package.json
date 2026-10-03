@@ -1,0 +1,14 @@
+{
+  "name": "user-snippets",
+  "contributes": {
+    "snippets": [
+      {
+        "language": [
+          "csharp",
+          "cs"
+        ],
+        "path": "./cs.json"
+      }
+    ]
+  }
+}
