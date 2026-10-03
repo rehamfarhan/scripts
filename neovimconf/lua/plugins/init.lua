@@ -139,10 +139,17 @@ return {
     version = "*",
     event = "VeryLazy",
     config = function()
-      require("nvim-surround").setup({})
+      require("nvim-surround").setup({
+        surrounds = {
+          ["("] = { add = { "(", ")" } },
+          ["{"] = { add = { "{", "}" } },
+          ["["] = { add = { "[", "]" } },
+        },
+      })
       vim.keymap.set("x", "s", "<Plug>(nvim-surround-visual)", { desc = "Add surrounding pair around selection" })
     end,
   },
+
 
 
 }
