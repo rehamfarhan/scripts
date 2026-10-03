@@ -147,8 +147,15 @@ return {
         },
       })
       vim.keymap.set("x", "s", "<Plug>(nvim-surround-visual)", { desc = "Add surrounding pair around selection" })
+
+      -- Direct visual mode surrounding without needing 's' prefix
+      local delimiters = { '"', "'", "`", "(", ")", "{", "}", "[", "]", "<", ">" }
+      for _, char in ipairs(delimiters) do
+        vim.keymap.set("x", char, "<Plug>(nvim-surround-visual)" .. char, { remap = true, desc = "Surround with " .. char })
+      end
     end,
   },
+
 
 
 
