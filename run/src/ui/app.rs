@@ -59,8 +59,6 @@ pub enum ActiveModal {
     },
     KeyboardPatch {
         selected_opt: usize,
-        custom_input: String,
-        is_custom_mode: bool,
     },
     ExecutionSettings {
         selected_opt: usize,
@@ -106,6 +104,7 @@ pub struct App {
     pub launch_target: Option<GameRecord>,
     pub show_quick_actions: bool,
     pub needs_editor: Option<PathBuf>,
+    pub keyd_editor_file: Option<PathBuf>,
     matcher: SkimMatcherV2,
 }
 
@@ -129,6 +128,7 @@ impl App {
             should_quit: false,
             launch_target: None,
             needs_editor: None,
+            keyd_editor_file: None,
             matcher: SkimMatcherV2::default(),
         };
 

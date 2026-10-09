@@ -13,6 +13,8 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Paragraph};
+
+use crate::model::WineOpts;
 use ratatui::Terminal;
 use std::io::{self, stdout};
 use std::path::PathBuf;
@@ -88,6 +90,33 @@ pub fn run_tui(games_root: PathBuf) -> io::Result<()> {
             terminal.clear()?;
             app.set_toast("✓ Wrapper script saved");
             app.reload_games();
+            continue;
+        }
+
+        // Handle keyd patch editor: open nvim with a temp file, parse lines on save
+        if let Some(keyd_file) = app.keyd_editor_file.take() {
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nvim".to_string());
+            let _ = disable_raw_mode();
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
+            let _ = std::process::Command::new(&editor).arg(&keyd_file).status();
+            let _ = execute!(std::io::stdout(), EnterAlternateScreen);
+            let _ = enable_raw_mode();
+            terminal.clear()?;
+
+            if let Ok(content) = std::fs::read_to_string(&keyd_file) {
+                let bindings = WineOpts::parse_keyd_bindings(&content);
+                let count = bindings.len();
+                crate::ui::events::apply_keyd_patch(
+                    &mut app,
+                    if bindings.is_empty() {
+                        None
+                    } else {
+                        Some(bindings)
+                    },
+                );
+                app.set_toast(format!("✓ keyd: {} binding(s) saved", count));
+            }
+            let _ = std::fs::remove_file(&keyd_file);
             continue;
         }
 

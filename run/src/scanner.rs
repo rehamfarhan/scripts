@@ -182,11 +182,14 @@ fn generate_env_block(
     let mut block = Vec::new();
 
     // Keyboard patch (keyd)
-    if let Some(ref remap) = opts.keyd_remap {
-        if !remap.trim().is_empty() {
+    if let Some(ref remaps) = opts.keyd_remap {
+        let remaps: Vec<&String> = remaps.iter().filter(|r| !r.trim().is_empty()).collect();
+        if !remaps.is_empty() {
             block.push("# Keyboard Patch (keyd)".to_string());
             block.push("if command -v keyd >/dev/null 2>&1; then".to_string());
-            block.push(format!("    keyd bind \"{}\" >/dev/null 2>&1 || true", remap));
+            for remap in remaps {
+                block.push(format!("    keyd bind \"{}\" >/dev/null 2>&1 || true", remap));
+            }
             block.push("    cleanup_keys() {".to_string());
             block.push("        keyd reload >/dev/null 2>&1 || true".to_string());
             block.push("    }".to_string());
@@ -544,7 +547,7 @@ mod tests {
 
         // Test with keyd enabled (previously would have used exec prefix)
         let opts = WineOpts {
-            keyd_remap: Some("leftshift=leftcontrol".to_string()),
+            keyd_remap: Some(vec!["leftshift=leftcontrol".to_string()]),
             ..Default::default()
         };
         let (path, _) = create_launcher_script(

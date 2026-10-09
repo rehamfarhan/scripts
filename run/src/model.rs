@@ -19,7 +19,7 @@ pub struct WineOpts {
     /// Only effective for Linux-native SDL games. When set for Windows games,
     /// it is stored but has no effect — Wine does not use SDL for display.
     pub sdl_driver: Option<String>,
-    pub keyd_remap: Option<String>,
+    pub keyd_remap: Option<Vec<String>>,
 }
 
 impl Default for WineOpts {
@@ -31,6 +31,24 @@ impl Default for WineOpts {
             sdl_driver: None,
             keyd_remap: None,
         }
+    }
+}
+
+impl WineOpts {
+    /// Parse keyd bindings from a multi-line string (one binding per line).
+    /// Empty lines and lines starting with `#` are ignored.
+    pub fn parse_keyd_bindings(input: &str) -> Vec<String> {
+        input
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(|l| l.to_string())
+            .collect()
+    }
+
+    /// Serialize keyd bindings to a multi-line string for the editor buffer.
+    pub fn keyd_bindings_to_string(bindings: &[String]) -> String {
+        bindings.join("\n")
     }
 }
 
@@ -254,4 +272,39 @@ pub fn format_star_rating(rating: u8) -> String {
     };
 
     format!("{}  ({}/10 • {})", slots, r, label)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WineOpts;
+
+    #[test]
+    fn parse_keyd_bindings_splits_lines_and_skips_comments_and_blanks() {
+        let input = "leftshift=leftcontrol\n\n# comment line\ncapslock=esc\n  \nctrl=hyper\n";
+        let bindings = WineOpts::parse_keyd_bindings(input);
+        assert_eq!(
+            bindings,
+            vec![
+                "leftshift=leftcontrol".to_string(),
+                "capslock=esc".to_string(),
+                "ctrl=hyper".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_keyd_bindings_empty_input_gives_empty_vec() {
+        assert!(WineOpts::parse_keyd_bindings("").is_empty());
+        assert!(WineOpts::parse_keyd_bindings("   \n# only a comment\n").is_empty());
+    }
+
+    #[test]
+    fn keyd_bindings_to_string_round_trips() {
+        let bindings = vec![
+            "leftshift=leftcontrol".to_string(),
+            "capslock=esc".to_string(),
+        ];
+        let text = WineOpts::keyd_bindings_to_string(&bindings);
+        assert_eq!(WineOpts::parse_keyd_bindings(&text), bindings);
+    }
 }

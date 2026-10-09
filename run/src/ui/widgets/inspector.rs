@@ -53,8 +53,16 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
         .unwrap_or("System Default (Auto)");
 
     let keyd_patch = opts
-        .and_then(|o| o.keyd_remap.as_deref())
-        .unwrap_or("Disabled");
+        .and_then(|o| o.keyd_remap.as_ref())
+        .map(|b| {
+            if b.is_empty() {
+                "Disabled".to_string()
+            } else {
+                b.join(", ")
+            }
+        })
+        .unwrap_or("Disabled".to_string());
+    let is_keyd_active = keyd_patch != "Disabled";
 
     let resolution = opts
         .and_then(|o| o.resolution.as_deref())
@@ -204,7 +212,7 @@ pub fn render_inspector(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("  ⌨️ Keyboard Patch:   ", style_meta_label()),
             Span::styled(
                 keyd_patch,
-                if keyd_patch != "Disabled" {
+                if is_keyd_active {
                     Style::default().fg(COLOR_PURPLE).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(COLOR_GREY)

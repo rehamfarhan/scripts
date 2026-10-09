@@ -218,25 +218,24 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) {
         // Keyboard Patch (keyd) remapped to 'p' / 'P' to free 'k' for Vim Up
         KeyCode::Char('p') | KeyCode::Char('P') => {
             if let Some(game) = app.selected_game() {
-                let current_remap = game
+                let current_bindings = game
                     .wine_opts
                     .as_ref()
-                    .and_then(|o| o.keyd_remap.as_deref())
-                    .unwrap_or("");
+                    .and_then(|o| o.keyd_remap.as_ref())
+                    .cloned()
+                    .unwrap_or_default();
 
-                let opt_idx = if current_remap == "leftshift=leftcontrol" {
+                let opt_idx = if current_bindings.len() == 1
+                    && current_bindings[0] == "leftshift=leftcontrol"
+                {
                     1
-                } else if !current_remap.is_empty() {
+                } else if !current_bindings.is_empty() {
                     2
                 } else {
                     0
                 };
 
-                app.active_modal = ActiveModal::KeyboardPatch {
-                    selected_opt: opt_idx,
-                    custom_input: current_remap.to_string(),
-                    is_custom_mode: false,
-                };
+                app.active_modal = ActiveModal::KeyboardPatch { selected_opt: opt_idx };
             }
         }
         KeyCode::Char('c') => {
@@ -384,114 +383,59 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
             }
             _ => ActiveModal::RateGame { selected_opt },
         },
-        ActiveModal::KeyboardPatch {
-            mut selected_opt,
-            mut custom_input,
-            mut is_custom_mode,
-        } => {
-            if is_custom_mode {
-                match key.code {
-                    KeyCode::Esc => {
-                        is_custom_mode = false;
-                        ActiveModal::KeyboardPatch {
-                            selected_opt,
-                            custom_input,
-                            is_custom_mode,
-                        }
+        ActiveModal::KeyboardPatch { mut selected_opt } => {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => ActiveModal::None,
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if selected_opt > 0 {
+                        selected_opt -= 1;
+                    } else {
+                        selected_opt = 2;
                     }
-                    KeyCode::Backspace => {
-                        custom_input.pop();
-                        ActiveModal::KeyboardPatch {
-                            selected_opt,
-                            custom_input,
-                            is_custom_mode,
-                        }
+                    ActiveModal::KeyboardPatch { selected_opt }
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    selected_opt = (selected_opt + 1) % 3;
+                    ActiveModal::KeyboardPatch { selected_opt }
+                }
+                KeyCode::Char('g') | KeyCode::Home => {
+                    ActiveModal::KeyboardPatch { selected_opt: 0 }
+                }
+                KeyCode::Char('G') | KeyCode::End => {
+                    ActiveModal::KeyboardPatch { selected_opt: 2 }
+                }
+                KeyCode::Enter => match selected_opt {
+                    0 => {
+                        apply_keyd_patch(app, None);
+                        ActiveModal::None
                     }
-                    KeyCode::Char(c) => {
-                        custom_input.push(c);
-                        ActiveModal::KeyboardPatch {
-                            selected_opt,
-                            custom_input,
-                            is_custom_mode,
-                        }
+                    1 => {
+                        apply_keyd_patch(app, Some(vec!["leftshift=leftcontrol".to_string()]));
+                        ActiveModal::None
                     }
-                    KeyCode::Enter => {
-                        let trimmed = custom_input.trim();
-                        if trimmed.is_empty() {
-                            apply_keyd_patch(app, None);
-                        } else {
-                            apply_keyd_patch(app, Some(trimmed.to_string()));
+                    2 => {
+                        // Open nvim with current bindings; main loop handles the rest
+                        if let Some(game) = app.selected_game() {
+                            let bindings = game
+                                .wine_opts
+                                .as_ref()
+                                .and_then(|o| o.keyd_remap.as_ref())
+                                .cloned()
+                                .unwrap_or_default();
+                            let content = WineOpts::keyd_bindings_to_string(&bindings);
+                            let temp_path = std::env::temp_dir().join(format!(
+                                "run_keyd_{}_{}.txt",
+                                game.dir.replace('/', "_"),
+                                std::process::id()
+                            ));
+                            let _ = std::fs::write(&temp_path, content);
+                            app.keyd_editor_file = Some(temp_path);
                         }
                         ActiveModal::None
                     }
-                    _ => ActiveModal::KeyboardPatch {
-                        selected_opt,
-                        custom_input,
-                        is_custom_mode,
-                    },
-                }
-            } else {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => ActiveModal::None,
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        if selected_opt > 0 {
-                            selected_opt -= 1;
-                        } else {
-                            selected_opt = 2;
-                        }
-                        ActiveModal::KeyboardPatch {
-                            selected_opt,
-                            custom_input,
-                            is_custom_mode,
-                        }
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        selected_opt = (selected_opt + 1) % 3;
-                        ActiveModal::KeyboardPatch {
-                            selected_opt,
-                            custom_input,
-                            is_custom_mode,
-                        }
-                    }
-                    KeyCode::Char('g') | KeyCode::Home => {
-                        ActiveModal::KeyboardPatch {
-                            selected_opt: 0,
-                            custom_input,
-                            is_custom_mode,
-                        }
-                    }
-                    KeyCode::Char('G') | KeyCode::End => {
-                        ActiveModal::KeyboardPatch {
-                            selected_opt: 2,
-                            custom_input,
-                            is_custom_mode,
-                        }
-                    }
-                    KeyCode::Enter => match selected_opt {
-                        0 => {
-                            apply_keyd_patch(app, None);
-                            ActiveModal::None
-                        }
-                        1 => {
-                            apply_keyd_patch(app, Some("leftshift=leftcontrol".to_string()));
-                            ActiveModal::None
-                        }
-                        2 => {
-                            is_custom_mode = true;
-                            ActiveModal::KeyboardPatch {
-                                selected_opt,
-                                custom_input,
-                                is_custom_mode,
-                            }
-                        }
-                        _ => ActiveModal::None,
-                    },
-                    _ => ActiveModal::KeyboardPatch {
-                        selected_opt,
-                        custom_input,
-                        is_custom_mode,
-                    },
-                }
+                    _ => ActiveModal::None,
+                },
+                _ => ActiveModal::KeyboardPatch { selected_opt },
             }
         }
         ActiveModal::ExecutionSettings {
@@ -1407,11 +1351,11 @@ fn handle_modal_key(app: &mut App, key: KeyEvent) {
     app.active_modal = next_modal;
 }
 
-fn apply_keyd_patch(app: &mut App, patch: Option<String>) {
+pub fn apply_keyd_patch(app: &mut App, bindings: Option<Vec<String>>) {
     if let Some(game) = app.selected_game().cloned() {
         let folder = app.games_root.join(&game.dir);
         let mut opts = game.wine_opts.clone().unwrap_or_default();
-        opts.keyd_remap = patch.clone();
+        opts.keyd_remap = bindings.clone();
 
         let mut updated = game.clone();
         updated.wine_opts = Some(opts.clone());
@@ -1426,7 +1370,10 @@ fn apply_keyd_patch(app: &mut App, patch: Option<String>) {
             Some(&opts),
         );
 
-        let status = patch.as_deref().unwrap_or("Disabled");
+        let status = match &bindings {
+            Some(b) if !b.is_empty() => b.join(", "),
+            _ => "Disabled".to_string(),
+        };
         app.set_toast(format!("✓ Set keyd patch for '{}' to: {}", game.display_name, status));
         app.reload_games();
     }

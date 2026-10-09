@@ -37,12 +37,8 @@ pub fn render_modals(f: &mut Frame, app: &App, area: Rect) {
         ActiveModal::RateGame { selected_opt } => {
             render_rate_modal(f, *selected_opt, area);
         }
-        ActiveModal::KeyboardPatch {
-            selected_opt,
-            custom_input,
-            is_custom_mode,
-        } => {
-            render_keyd_modal(f, *selected_opt, custom_input, *is_custom_mode, area);
+        ActiveModal::KeyboardPatch { selected_opt } => {
+            render_keyd_modal(f, *selected_opt, area);
         }
         ActiveModal::ExecutionSettings {
             selected_opt,
@@ -151,8 +147,6 @@ fn render_rate_modal(f: &mut Frame, selected: usize, area: Rect) {
 fn render_keyd_modal(
     f: &mut Frame,
     selected: usize,
-    custom_input: &str,
-    is_custom_mode: bool,
     area: Rect,
 ) {
     let popup_area = centered_rect(60, 42, area);
@@ -161,7 +155,7 @@ fn render_keyd_modal(
     let options = [
         "1) Disabled / None [Default]",
         "2) Map Left Shift -> Left Ctrl (leftshift=leftcontrol)",
-        "3) Custom keyd binding...",
+        "3) Custom keyd bindings (opens editor)...",
     ];
 
     let mut lines = Vec::new();
@@ -185,15 +179,6 @@ fn render_keyd_modal(
                     Style::default().fg(Color::White)
                 },
             ),
-        ]));
-    }
-
-    if is_custom_mode {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("  Custom Binding: ", Style::default().fg(COLOR_YELLOW)),
-            Span::styled(custom_input, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Span::styled("█", Style::default().fg(COLOR_CYAN)),
         ]));
     }
 
