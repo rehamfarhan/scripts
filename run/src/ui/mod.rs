@@ -50,7 +50,7 @@ pub fn run_tui(games_root: PathBuf) -> io::Result<()> {
 
     while !app.should_quit {
         terminal.draw(|f| {
-            let layout = DashboardLayout::new(f.area(), app.show_quick_actions);
+            let layout = DashboardLayout::new(f.area());
 
             // 1. Header Bar (Centered)
             let title_text = main_title();
@@ -72,7 +72,7 @@ pub fn run_tui(games_root: PathBuf) -> io::Result<()> {
 
             // 4. Right Bottom Hotkeys & Tips (if enabled)
             if app.show_quick_actions {
-                render_hotkeys(f, &app, layout.right_hotkeys);
+                render_hotkeys(f, &app, f.area());
             }
 
             // 5. Active Modals (Overlay)
