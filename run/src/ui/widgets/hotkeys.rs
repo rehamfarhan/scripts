@@ -51,6 +51,18 @@ pub fn render_hotkeys(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("[q] ", style_keybind()),
             Span::styled("Quit", Style::default().fg(Color::White)),
         ]),
+        Line::from(vec![
+            Span::styled(" [Ctrl+J/K] ", style_keybind()),
+            Span::styled("Move ", Style::default().fg(Color::White)),
+            Span::styled("[Ctrl+D/U] ", style_keybind()),
+            Span::styled("Pg  ", Style::default().fg(Color::White)),
+            Span::styled("[/] ", style_keybind()),
+            Span::styled("Filter ", Style::default().fg(Color::White)),
+            Span::styled("[Esc] ", style_keybind()),
+            Span::styled("Clear ", Style::default().fg(Color::White)),
+            Span::styled("[i] ", style_keybind()),
+            Span::styled("Hide Pane", Style::default().fg(Color::White)),
+        ]),
         Line::from(""),
         if let Some(toast) = toast_opt {
             Line::from(vec![
@@ -66,7 +78,7 @@ pub fn render_hotkeys(f: &mut Frame, app: &App, area: Rect) {
             Line::from(vec![
                 Span::styled(" 💡 Tip: ", Style::default().fg(COLOR_PURPLE).add_modifier(Modifier::BOLD)),
                 Span::styled(
-                    "Press / to instantly filter games, or press Enter to launch.",
+                    "Press / to filter, p for keyd patches, i toggles this pane.",
                     Style::default().fg(COLOR_GREY),
                 ),
             ])
