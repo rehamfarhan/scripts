@@ -57,8 +57,15 @@ class ParsingTests(unittest.TestCase):
 
     def test_split_description(self):
         self.assertEqual(money.split_description(["Mom's", "vault"]), ("Mom's vault", ""))
-        self.assertEqual(money.split_description(["Burger", "@lake", "cafe"]), ("lake cafe", "Burger"))
-        self.assertEqual(money.split_description(["me@x.com"]), ("me@x.com", ""))
+        sd = money.split_description
+        self.assertEqual(sd(["Burger", "@lake", "cafe"]), ("lake cafe", "Burger"))      # source = rest of the text
+        self.assertEqual(sd(["Chicken", "Fry", "@Sadar", "Hospital"]), ("Sadar Hospital", "Chicken Fry"))
+        self.assertEqual(sd(["Chicken Fry @Sadar Hospital"]), ("Sadar Hospital", "Chicken Fry"))   # one quoted argument
+        self.assertEqual(sd(["@Sadar", "Hospital"]), ("Sadar Hospital", ""))
+        self.assertEqual(sd(["x", "@a", "@b"]), ("a @b", "x"))                         # later '@' stays in the source
+        self.assertEqual(sd(["@me@bank.com"]), ("me@bank.com", ""))
+        self.assertEqual(sd(["coffee", "@", "cafe"]), ("cafe", "coffee"))               # space after '@' is fine
+        self.assertEqual(sd(["Tutor", "Fees"]), ("Tutor Fees", ""))                     # no @ -> whole text
         for bad in ([], ["Burger", "@"]):
             with self.assertRaises(money.AppError):
                 money.split_description(bad)
@@ -317,6 +324,55 @@ class TagTests(Base):
         self.assertIn(":education", run("reserves")[1])
         run("settle", "Tutor")
         self.assertIn(":education", run("log")[1])
+
+
+class SourceTests(Base):
+    def setUp(self):
+        super().setUp()
+        run("init")
+        run("+1000", "seed")
+
+    def last_row(self):
+        return run("log")[1].splitlines()[2]
+
+    def test_multiword_source_with_tags_before_or_after(self):
+        for args in (["Chicken", "Fry", "@Sadar", "Hospital", ":food"],
+                     ["Chicken", "Fry", ":food", "@Sadar", "Hospital"],
+                     [":food", "Chicken", "Fry", "@Sadar", "Hospital"]):
+            self.assertEqual(run("-40", *args)[0], 0)
+            row = self.last_row()
+            self.assertIn(" Sadar Hospital ", row)
+            self.assertIn("Chicken Fry", row)
+            self.assertEqual(row.count(":food"), 1)
+
+    def test_options_after_a_multiword_source(self):
+        self.assertEqual(run("-5", "tea", "@Sadar", "Hospital", "Canteen", "-t", "drink", "-d", "yesterday")[0], 0)
+        row = next(l for l in run("log")[1].splitlines() if "Canteen" in l)   # backdated, so not the newest row
+        self.assertIn("Sadar Hospital Canteen", row)
+        self.assertIn(":drink", row)
+
+    def test_case_preserved_but_grouped_case_insensitively(self):
+        run("-10", "a", "@Sadar Hospital")
+        run("-20", "b", "@sadar hospital")
+        run("-30", "c", "@SADAR HOSPITAL")
+        rows = run("log")[1]
+        for spelling in ("Sadar Hospital", "sadar hospital", "SADAR HOSPITAL"):
+            self.assertIn(spelling, rows)                 # stored exactly as typed
+        summary = run("summary", "--by", "source")[1]
+        line = next(l for l in summary.splitlines() if "adar" in l.lower())
+        self.assertIn("Sadar Hospital", line)             # first spelling labels the group
+        self.assertIn("BDT 60", line)                     # all three counted together
+        self.assertEqual(sum("adar" in l.lower() for l in summary.splitlines()), 1)
+        self.assertIn("b", run("search", "SADAR hospital")[1])   # search ignores case
+
+    def test_no_at_means_whole_text_is_source(self):
+        run("+3000", "Tutor Fees")
+        self.assertIn("Tutor Fees", self.last_row())
+
+    def test_empty_source_after_at_is_an_error(self):
+        code, _, err = run("-5", "coffee", "@")
+        self.assertEqual(code, 2)
+        self.assertIn("Nothing after '@'", err)
 
 
 class SpecialCharTests(Base):

@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Iterator, Optional
 from uuid import uuid4
 
-__version__ = "1.1.0"
+__version__ = "1.2.1"
 
 ENV_DIR = "MONEY_DIR"
 LEDGER_FILE = "ledger.jsonl"
@@ -662,8 +662,14 @@ def clean_text(text: str) -> str:
 
 
 def split_description(words: list[str]) -> tuple[str, str]:
-    """'Croissant Burger @lake cafe' -> (source='lake cafe', note='Croissant Burger').
-    Without an '@', the whole text is the source."""
+    """Everything after the first '@' is the source (spaces and capitals included);
+    the text before it is the note. ':tags' are pulled out earlier, so they can sit anywhere.
+
+        Chicken Fry @Sadar Hospital            -> source 'Sadar Hospital', note 'Chicken Fry'
+        Chicken Fry @Sadar Hospital :food      -> the same, plus the tag 'food'
+
+    With no '@', the whole text is the source.
+    """
     text = clean_text(" ".join(words))
     m = re.search(r"(?:^|\s)@(.*)$", text)
     if m:
@@ -1152,6 +1158,7 @@ EPILOG = """\
 quick entry:
   money +500 "Mom's vault"                          income (quote apostrophes!)
   money -90 Croissant Burger @lakeviewcafe :food    spend: note, @source, :tags
+  money -90 Burger @Lake View Cafe :food           everything after @ is the source (spaces ok); tags anywhere
   money -90 cafe :food :treat  (or :food:treat)     several tags
   money -90 cafe -t food -t treat                   tags via flag, same thing
   money -90 cafe --date yesterday                   backdate (within the active month)

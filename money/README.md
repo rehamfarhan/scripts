@@ -116,7 +116,7 @@ $ money -250 Rickshaw fares :transport
 Recorded 4c212d4b: Rickshaw fares -BDT 250  :transport
 ```
 
-With an `@`, the text after it is the **source** and the text before it is the **note**. Without an `@`, the whole text is the source.
+Everything after the first `@` is the **source** (spaces and capitals included) and the text before it is the **note**. With no `@`, the whole text is the source. Tags like `:food` can go anywhere.
 
 ### 5. Reserve money for something coming up
 
@@ -287,10 +287,16 @@ money -AMOUNT  description      spending
 | You type | Source | Note | Tags |
 |---|---|---|---|
 | `cafe` | cafe | | |
+| `Tutor Fees` | Tutor Fees | | |
 | `Croissant Burger @lakeviewcafe` | lakeviewcafe | Croissant Burger | |
+| `Chicken Fry @Sadar Hospital` | Sadar Hospital | Chicken Fry | |
+| `Chicken Fry @Sadar Hospital :food` | Sadar Hospital | Chicken Fry | food |
+| `:food Chicken Fry @Sadar Hospital` | Sadar Hospital | Chicken Fry | food |
 | `Burger @cafe :food :treat` | cafe | Burger | food, treat |
 | `Burger @cafe -t food -t treat` | cafe | Burger | food, treat |
 
+- **Source rules:** everything after the first `@` is the source, with spaces and capitals kept exactly as typed. Put the note **before** the `@`. Tags (`:food`) can go before or after it, and options like `-d` and `-t` go last. A second `@` just becomes part of the source (`@me@bank.com`).
+- **Case:** `Sadar Hospital`, `sadar hospital` and `SADAR HOSPITAL` are stored as you typed them but count as the same source in `summary --by source` and `search`. The first spelling you used labels the group.
 - **Tags:** start a word with `:`, like `:food`. Unlike `#` (a comment in many shells) and `!` (history expansion), `:` works unquoted in bash and zsh. Stack them as `:food :treat`, `:food:treat` or `:food,treat`, or use `-t food` (repeatable; `-t food,treat` also works). Tags are case-insensitive. Settling a reservation passes its tags on to the spend.
 - A word made only of colons (`:`, `::`) is plain text, and colons inside a word (`10:30`, `shop:main`) are fine.
 - **Dates:** `--date yesterday`, `--date 2026-10-03`, `--date "2026-10-03 14:30"`. Short form `-d`. Dates must be inside the active month and not in the future.
