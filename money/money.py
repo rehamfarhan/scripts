@@ -1,642 +1,1351 @@
 #!/usr/bin/env python3
-"""money: a tiny git-like terminal app for tracking money.
+"""money - a tiny git-like terminal ledger, one folder per month.
 
-Goals:
-- Keep input fast and natural.
-- Store everything locally in a hidden folder.
-- Treat each money event like a commit.
-- Add a reservation layer for money that is "set aside".
+Layout (default root ~/money, override with $MONEY_DIR):
 
-Main ideas:
-- Transactions change total balance.
-- Reservations reduce available balance, but do not change total until settled.
-- Settling a reservation creates a normal spend transaction.
+    ~/money/
+      config.json              currency
+      recurring.json           monthly recurring reservations
+      2026-09/ledger.jsonl     closed month (read-only) + closed.json (totals, checksum)
+      2026-10/ledger.jsonl     the active month (the one folder without closed.json)
 
-Examples:
+Each month is an append-only event log; balances and reservations are derived by
+replaying it. `money archive` closes a finished month and opens the next one with the
+carried-over balance, carried-over reservations and your recurring reservations.
+
+Quick entry (quote anything the shell would eat, e.g. apostrophes):
     money init
-    money +500 Mom's vault
-    money -90 Croissant Burger @lakeviewcafe
-    money reserve 1200 RafiqulSir
-    money settle RafiqulSir
-    money log
-    money reserves
-    money status
+    money +500 "Mom's vault"
+    money -90 Croissant Burger @lakeviewcafe :food    # note, @source, :tags (or -t food)
+    (@ _ - / . : work in sources and names; tags take @ _ - / . too; words may start with "-")
+    money -90 cafe --date yesterday
+    money reserve 1200 RafiqulSir :tutor
+    money settle RafiqulSir [--amount 1150]            # becomes a real spend
+    money release RafiqulSir                           # cancel, spend nothing
+    money recur add 12000 Rent :housing                # re-reserved every new month
+    money undo | money delete <id>
+    money status | log | reserves | search | summary | export | months
+    money archive                                      # once the month has ended
+
+Money is stored as integer minor units (paisa/cents), never floats.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
 import json
+import os
+import re
+import shutil
 import sys
-from dataclasses import asdict, dataclass
-from datetime import datetime
+import unicodedata
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Callable, Iterable, Iterator, Optional
 from uuid import uuid4
 
-APP_DIR_NAME = ".moneygit"
-DATA_FILE_NAME = "ledger.json"
-RESERVATION_FILE_NAME = "reservations.json"
-CONFIG_FILE_NAME = "config.json"
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+__version__ = "1.1.0"
+
+ENV_DIR = "MONEY_DIR"
+LEDGER_FILE = "ledger.jsonl"
+CLOSED_FILE = "closed.json"
+CONFIG_FILE = "config.json"
+RECURRING_FILE = "recurring.json"
+LOCK_FILE = ".lock"
+SCHEMA_VERSION = 1
+DEFAULT_CURRENCY = "BDT"
+
+QUICK_RE = re.compile(r"^[+-]\d")
+MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+AMOUNT_RE = re.compile(r"^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?$")
 
 
 class AppError(Exception):
-    """Friendly exception for all user-facing errors."""
+    """Friendly exception for every user-facing error."""
 
 
-@dataclass
-class Transaction:
+# --------------------------------------------------------------------------- #
+# Time (everything goes through now() so tests can fake the clock)
+# --------------------------------------------------------------------------- #
+
+def now() -> datetime:
+    return datetime.now().astimezone()
+
+
+def now_ts() -> str:
+    return now().isoformat(timespec="seconds")
+
+
+def current_month() -> str:
+    return now().strftime("%Y-%m")
+
+
+def parse_month(text: str) -> str:
+    text = text.strip()
+    if not MONTH_RE.match(text):
+        raise AppError(f"Invalid month: {text!r} (use YYYY-MM, e.g. 2026-10)")
+    return text
+
+
+def month_start(month: str) -> datetime:
+    year, mon = map(int, month.split("-"))
+    return datetime(year, mon, 1).astimezone()
+
+
+def next_month(month: str) -> str:
+    year, mon = map(int, month.split("-"))
+    return f"{year + 1}-01" if mon == 12 else f"{year}-{mon + 1:02d}"
+
+
+def months_between(first: str, last: str) -> list[str]:
+    """Months strictly between two YYYY-MM strings."""
+    out, m = [], next_month(first)
+    while m < last:
+        out.append(m)
+        m = next_month(m)
+    return out
+
+
+def days_left(month: str) -> int:
+    return (month_start(next_month(month)).date() - now().date()).days
+
+
+def resolve_timestamp(text: Optional[str]) -> str:
+    """None/today/yesterday/YYYY-MM-DD/'YYYY-MM-DD HH:MM' -> ISO timestamp (no future dates)."""
+    current = now()
+    if not text:
+        return current.isoformat(timespec="seconds")
+    raw = text.strip().lower()
+    when = None
+    if raw == "today":
+        when = current
+    elif raw == "yesterday":
+        when = current - timedelta(days=1)
+    else:
+        for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M"):
+            try:
+                parsed = datetime.strptime(raw, fmt)
+            except ValueError:
+                continue
+            when = (
+                current.replace(year=parsed.year, month=parsed.month, day=parsed.day)
+                if fmt == "%Y-%m-%d" else parsed.astimezone()
+            )
+            break
+    if when is None:
+        raise AppError(f"Invalid date: {text!r} (use YYYY-MM-DD, 'YYYY-MM-DD HH:MM', today or yesterday)")
+    if when > current + timedelta(minutes=1):
+        raise AppError("That date is in the future")
+    return when.isoformat(timespec="seconds")
+
+
+# --------------------------------------------------------------------------- #
+# Model
+# --------------------------------------------------------------------------- #
+
+class Kind(str, Enum):
+    OPEN = "open"        # opening balance of a month (carried over, not income)
+    ADD = "add"
+    SPEND = "spend"
+    RESERVE = "reserve"
+    RELEASE = "release"
+    SETTLE = "settle"
+
+
+MONEY_KINDS = {Kind.OPEN, Kind.ADD, Kind.SPEND, Kind.SETTLE}  # events that move the total
+FLOW_KINDS = {Kind.ADD, Kind.SPEND, Kind.SETTLE}              # real income/expense
+CLOSING_KINDS = {Kind.RELEASE, Kind.SETTLE}                   # events that close a reservation
+
+
+def new_id() -> str:
+    return uuid4().hex
+
+
+def normalize_key(value: str) -> str:
+    """Stable, case/whitespace-insensitive key for matching reservation names."""
+    return " ".join(value.split()).casefold()
+
+
+def normalize_tag(text: str) -> str:
+    return re.sub(r"\s+", "-", text.strip().casefold())
+
+
+def merge_tags(*groups: Iterable[str]) -> tuple[str, ...]:
+    """Accepts ':a:b', 'a,b', 'a b' style input; returns unique normalized tags in order.
+    ':' and ',' separate tags; every other character (including '#') is part of the tag."""
+    out: list[str] = []
+    for group in groups:
+        for raw in group:
+            for part in re.split(r"[,:]", raw):
+                tag = normalize_tag(part)
+                if tag and tag not in out:
+                    out.append(tag)
+    return tuple(out)
+
+
+def extract_tags(words: list[str]) -> tuple[list[str], list[str]]:
+    """Split ':tag' words from the rest. Returns (remaining words, raw tag words).
+    A word of only colons/commas (':', '::') is plain text, not a tag."""
+    rest, raw = [], []
+    for w in words:
+        (raw if w.startswith(":") and w.strip(":,") else rest).append(w)
+    return rest, raw
+
+
+@dataclass(frozen=True)
+class Event:
     id: str
-    timestamp: str
-    source: str
-    action: str  # add | spend
-    amount: float
+    ts: str                         # ISO 8601 with UTC offset
+    kind: Kind
+    amount: int = 0                 # minor units; >= 0 except OPEN (carried balance can be negative)
+    source: str = ""                # who/where (or reservation label)
     note: str = ""
+    key: str = ""                   # normalized reservation name
+    ref: str = ""                   # id of the RESERVE this release/settle closes
+    tags: tuple[str, ...] = ()
+    since: str = ""                 # original creation time of a carried-over reservation
+    sys: bool = False               # created by `archive`; protected from undo/delete
 
     @property
-    def signed_amount(self) -> float:
-        return self.amount if self.action == "add" else -self.amount
+    def when(self) -> datetime:
+        return datetime.fromisoformat(self.ts)
+
+    @property
+    def signed(self) -> int:
+        if self.kind in (Kind.ADD, Kind.OPEN):
+            return self.amount
+        if self.kind in (Kind.SPEND, Kind.SETTLE):
+            return -self.amount
+        return 0
+
+    def to_dict(self) -> dict:
+        d: dict = {"v": SCHEMA_VERSION, "id": self.id, "ts": self.ts, "kind": self.kind.value}
+        for name in ("amount", "source", "note", "key", "ref", "since"):
+            value = getattr(self, name)
+            if value:
+                d[name] = value
+        if self.tags:
+            d["tags"] = list(self.tags)
+        if self.sys:
+            d["sys"] = True
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Event":
+        if not isinstance(d, dict):
+            raise ValueError("not a JSON object")
+        if d.get("v") != SCHEMA_VERSION:
+            raise ValueError(f"unsupported schema version {d.get('v')!r}")
+        kind = Kind(d["kind"])
+        amount = d.get("amount", 0)
+        if isinstance(amount, bool) or not isinstance(amount, int):
+            raise ValueError("bad amount")
+        if amount < 0 and kind is not Kind.OPEN:
+            raise ValueError("negative amount")
+        text = {f: d.get(f, "") for f in ("id", "ts", "source", "note", "key", "ref", "since")}
+        if not all(isinstance(v, str) for v in text.values()) or not text["id"]:
+            raise ValueError("bad field type")
+        tags = d.get("tags", [])
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            raise ValueError("bad tags")
+        event = cls(kind=kind, amount=amount, tags=tuple(tags), sys=bool(d.get("sys", False)), **text)
+        datetime.fromisoformat(event.ts)  # validate
+        if event.since:
+            datetime.fromisoformat(event.since)
+        return event
 
 
-@dataclass
+@dataclass(frozen=True)
 class Reservation:
-    key: str      # normalized identifier used for matching
-    label: str    # original display label
-    amount: float
+    id: str       # id of the RESERVE event
+    key: str
+    label: str
+    amount: int
     created_at: str
+    tags: tuple[str, ...]
 
 
-class MoneyStore:
-    """All file I/O lives here so the rest of the app stays simple."""
+class Ledger:
+    """Read-only state derived by replaying one month's events in append order."""
+
+    def __init__(self, events: Iterable[Event]):
+        self.events = list(events)
+        self.by_id = {e.id: e for e in self.events}
+        self.reservations: dict[str, Reservation] = {}
+        self.total = 0
+        for e in self.events:
+            self.total += e.signed
+            if e.kind is Kind.RESERVE:
+                self.reservations[e.id] = Reservation(e.id, e.key, e.source, e.amount, e.since or e.ts, e.tags)
+            elif e.kind in CLOSING_KINDS:
+                self.reservations.pop(e.ref, None)
+
+    @property
+    def reserved(self) -> int:
+        return sum(r.amount for r in self.reservations.values())
+
+    @property
+    def available(self) -> int:
+        return self.total - self.reserved
+
+    @property
+    def entry_count(self) -> int:
+        return sum(1 for e in self.events if not e.sys)
+
+    def find_reservation(self, name: str) -> Optional[Reservation]:
+        key = normalize_key(name)
+        return next((r for r in self.reservations.values() if r.key == key), None)
+
+    def money_events(self) -> list[Event]:
+        """Open/add/spend/settle events in chronological order (stable)."""
+        return sorted((e for e in self.events if e.kind in MONEY_KINDS), key=lambda e: e.when)
+
+    def resolve(self, prefix: str) -> Event:
+        prefix = prefix.strip().lower()
+        if not prefix:
+            raise AppError("Provide an entry ID")
+        matches = [e for e in self.events if e.id.startswith(prefix)]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise AppError(f"More than one entry matches {prefix}. Use more characters.")
+        raise AppError(f"No entry found with ID starting {prefix} in the active month")
+
+
+def check_deletable(ledger: Ledger, target: Event) -> Event:
+    """Raise unless removing `target` leaves a consistent ledger."""
+    if target.sys:
+        hint = " To drop a reservation use: money release NAME" if target.kind is Kind.RESERVE else ""
+        raise AppError(f"{target.id[:8]} was created by archive and can't be deleted.{hint}")
+    if target.kind is Kind.RESERVE:
+        closer = next((e for e in ledger.events if e.kind in CLOSING_KINDS and e.ref == target.id), None)
+        if closer:
+            raise AppError(
+                f"Reservation '{target.source}' was closed by {closer.kind.value} "
+                f"{closer.id[:8]}. Delete that first."
+            )
+    elif target.kind in CLOSING_KINDS:
+        original = ledger.by_id.get(target.ref)
+        if original and ledger.find_reservation(original.source):
+            raise AppError(
+                f"Can't restore '{original.source}': another active reservation with that "
+                "name exists. Settle or release it first."
+            )
+    return target
+
+
+# --------------------------------------------------------------------------- #
+# Storage
+# --------------------------------------------------------------------------- #
+
+def atomic_write(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def serialize(events: Iterable[Event]) -> str:
+    return "".join(json.dumps(e.to_dict(), ensure_ascii=False, separators=(",", ":")) + "\n" for e in events)
+
+
+class Store:
+    """All file I/O. Every read and read-modify-write happens under one root lock."""
 
     def __init__(self, root: Path):
         self.root = root
-        self.app_dir = root / APP_DIR_NAME
-        self.data_file = self.app_dir / DATA_FILE_NAME
-        self.reservation_file = self.app_dir / RESERVATION_FILE_NAME
-        self.config_file = self.app_dir / CONFIG_FILE_NAME
+        self.config_path = root / CONFIG_FILE
+        self.recurring_path = root / RECURRING_FILE
+        self.lock_path = root / LOCK_FILE
 
-    def is_initialized(self) -> bool:
-        return self.app_dir.exists() and self.data_file.exists() and self.reservation_file.exists()
-
-    def init(self) -> None:
-        self.app_dir.mkdir(parents=True, exist_ok=True)
-        if not self.data_file.exists():
-            self._write_json(self.data_file, {"transactions": []})
-        if not self.reservation_file.exists():
-            self._write_json(self.reservation_file, {"reservations": []})
-        if not self.config_file.exists():
-            self._write_json(self.config_file, {"currency": "BDT"})
-
-    def load_config(self) -> Dict[str, Any]:
-        if self.config_file.exists():
-            return self._read_json(self.config_file)
-        return {"currency": "BDT"}
-
-    def set_currency(self, currency: str) -> None:
-        self.init()
-        cfg = self.load_config()
-        cfg["currency"] = currency.strip().upper()
-        self._write_json(self.config_file, cfg)
-
-    def load_transactions(self) -> List[Transaction]:
-        self._ensure_initialized()
-        raw = self._read_json(self.data_file)
-        return [Transaction(**item) for item in raw.get("transactions", [])]
-
-    def save_transactions(self, txs: List[Transaction]) -> None:
-        self._ensure_initialized()
-        self._write_json(self.data_file, {"transactions": [asdict(t) for t in txs]})
-
-    def add_transaction(self, tx: Transaction) -> None:
-        txs = self.load_transactions()
-        txs.append(tx)
-        self.save_transactions(txs)
-
-    def load_reservations(self) -> List[Reservation]:
-        self._ensure_initialized()
-        raw = self._read_json(self.reservation_file)
-        return [Reservation(**item) for item in raw.get("reservations", [])]
-
-    def save_reservations(self, reservations: List[Reservation]) -> None:
-        self._ensure_initialized()
-        self._write_json(self.reservation_file, {"reservations": [asdict(r) for r in reservations]})
-
-    def add_reservation(self, label: str, amount: float) -> Reservation:
-        reservations = self.load_reservations()
-        key = normalize_identifier(label)
-        if any(r.key == key for r in reservations):
-            raise AppError(f"Active reservation already exists for: {label}")
-
-        reservation = Reservation(
-            key=key,
-            label=label.strip(),
-            amount=amount,
-            created_at=now_str(),
-        )
-        reservations.append(reservation)
-        self.save_reservations(reservations)
-        return reservation
-
-    def remove_reservation(self, identifier: str) -> Reservation:
-        reservations = self.load_reservations()
-        key = normalize_identifier(identifier)
-        matches = [r for r in reservations if r.key == key]
-        if not matches:
-            raise AppError(f"No active reservation found for: {identifier}")
-
-        reservation = matches[0]
-        reservations = [r for r in reservations if r.key != key]
-        self.save_reservations(reservations)
-        return reservation
-
-    def find_reservation(self, identifier: str) -> Optional[Reservation]:
-        key = normalize_identifier(identifier)
-        for reservation in self.load_reservations():
-            if reservation.key == key:
-                return reservation
-        return None
-
-    def delete_transaction(self, tx_id: str) -> bool:
-        txs = self.load_transactions()
-        new_txs = [t for t in txs if t.id != tx_id]
-        if len(new_txs) < len(txs):
-            self.save_transactions(new_txs)
-            return True
-        return False
-
-    def _ensure_initialized(self) -> None:
-        if not self.is_initialized():
-            raise AppError("Repository not initialized. Run: money init")
-
+    # -- locating ----------------------------------------------------------- #
     @staticmethod
-    def _read_json(path: Path) -> Dict[str, Any]:
+    def default_root() -> Path:
+        env = os.environ.get(ENV_DIR)
+        return Path(env).expanduser() if env else Path.home() / "money"
+
+    @classmethod
+    def for_init(cls) -> "Store":
+        return cls(cls.default_root())
+
+    @classmethod
+    def open(cls) -> "Store":
+        store = cls(cls.default_root())
+        if not store.config_path.exists():
+            raise AppError(f"Not initialized ({store.root}). Run: money init")
+        return store
+
+    def ensure_initialized(self) -> bool:
+        """Create root, config and the current month. Returns True if anything was created."""
+        created = not self.config_path.exists()
+        self.root.mkdir(parents=True, exist_ok=True)
+        if created:
+            atomic_write(self.config_path, json.dumps({"currency": DEFAULT_CURRENCY}, indent=2) + "\n")
+        if not self.months():
+            self._create_month(current_month(), [])
+            created = True
+        return created
+
+    # -- months ------------------------------------------------------------- #
+    def month_dir(self, month: str) -> Path:
+        return self.root / month
+
+    def ledger_path(self, month: str) -> Path:
+        return self.month_dir(month) / LEDGER_FILE
+
+    def closed_path(self, month: str) -> Path:
+        return self.month_dir(month) / CLOSED_FILE
+
+    def months(self) -> list[str]:
+        if not self.root.is_dir():
+            return []
+        return sorted(p.name for p in self.root.iterdir()
+                      if p.is_dir() and MONTH_RE.match(p.name) and (p / LEDGER_FILE).exists())
+
+    def is_closed(self, month: str) -> bool:
+        return self.closed_path(month).exists()
+
+    def open_months(self) -> list[str]:
+        return [m for m in self.months() if not self.is_closed(m)]
+
+    def active_month(self) -> Optional[str]:
+        opens = self.open_months()
+        if len(opens) > 1:
+            raise AppError(f"More than one open month ({', '.join(opens)}). Fix by hand: "
+                           "an archived month needs a closed.json file.")
+        return opens[0] if opens else None
+
+    def _require_active(self) -> str:
+        month = self.active_month()
+        if not month:
+            if not self.months():
+                raise AppError("No months found. Run: money init")
+            raise AppError("No active month. Run: money archive")
+        return month
+
+    def closed_ok(self, month: str) -> bool:
         try:
-            with path.open("r", encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            raise AppError(f"Corrupted data file: {path}") from e
+            info = json.loads(self.closed_path(month).read_text(encoding="utf-8"))
+            digest = hashlib.sha256(self.ledger_path(month).read_bytes()).hexdigest()
+            return info.get("sha256") == digest
+        except (OSError, ValueError):
+            return False
+
+    def _write_closed(self, month: str, ledger: Ledger) -> None:
+        path = self.ledger_path(month)
+        info = {
+            "month": month,
+            "closed_at": now_ts(),
+            "closing_total": ledger.total,
+            "closing_reserved": ledger.reserved,
+            "entries": ledger.entry_count,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        atomic_write(self.closed_path(month), json.dumps(info, indent=2) + "\n")
+        os.chmod(path, 0o444)
+
+    def _create_month(self, month: str, events: list[Event]) -> None:
+        tmp = self.root / f".new-{month}"
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        tmp.mkdir()
+        self._write_events(tmp / LEDGER_FILE, events)
+        os.rename(tmp, self.month_dir(month))
+
+    # -- locking ------------------------------------------------------------ #
+    @contextmanager
+    def locked(self) -> Iterator[None]:
+        with open(self.lock_path, "a+b") as fh:
+            if os.name == "nt":
+                import msvcrt
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fh, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(fh, fcntl.LOCK_UN)
+
+    # -- ledger I/O (callers hold the lock) --------------------------------- #
+    def _read(self, month: str) -> list[Event]:
+        path = self.ledger_path(month)
+        events: list[Event] = []
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for n, line in enumerate(fh, 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        events.append(Event.from_dict(json.loads(line)))
+                    except (ValueError, KeyError, TypeError) as e:
+                        raise AppError(f"{path}: line {n} is corrupt ({e})") from e
+        except FileNotFoundError:
+            raise AppError(f"No ledger for {month}. See: money months") from None
+        return events
 
     @staticmethod
-    def _write_json(path: Path, data: Dict[str, Any]) -> None:
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.write("")
-        tmp.replace(path)
+    def _write_events(path: Path, events: list[Event]) -> None:
+        with path.open("w", encoding="utf-8", newline="\n") as fh:
+            fh.write(serialize(events))
+            fh.flush()
+            os.fsync(fh.fileno())
+
+    def _append(self, month: str, events: list[Event]) -> None:
+        with self.ledger_path(month).open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(serialize(events))
+            fh.flush()
+            os.fsync(fh.fileno())
+
+    # -- public reads ------------------------------------------------------- #
+    def load(self, month: str) -> Ledger:
+        with self.locked():
+            return Ledger(self._read(month))
+
+    def snapshot(self, month: Optional[str] = None) -> tuple[str, Ledger]:
+        """(month, ledger) for the given month, or the active one."""
+        with self.locked():
+            month = parse_month(month) if month else self._require_active()
+            ledger = Ledger(self._read(month))
+        self._warn_if_modified(month)
+        return month, ledger
+
+    def snapshots(self, month: Optional[str] = None, everything: bool = False) -> list[tuple[str, Ledger]]:
+        if not everything:
+            return [self.snapshot(month)]
+        out = []
+        for m in self.months():
+            out.append((m, self.load(m)))
+            self._warn_if_modified(m)
+        return out
+
+    def _warn_if_modified(self, month: str) -> None:
+        if self.is_closed(month) and not self.closed_ok(month):
+            warn(f"{month} was modified after it was closed (checksum mismatch).")
+
+    # -- public writes (active month only) ---------------------------------- #
+    def commit(self, build: Callable[[Ledger], Optional[Event]]) -> tuple[Optional[Event], Ledger]:
+        """Atomically: read active ledger -> validate/build one event -> append it."""
+        with self.locked():
+            month = self._require_active()
+            ledger = Ledger(self._read(month))
+            event = build(ledger)
+            if event is None:
+                return None, ledger
+            event_month = event.ts[:7]
+            if event_month > month:
+                raise AppError(f"{event_month} is a new month but {month} is still open. "
+                               "Run: money archive")
+            if event_month < month:
+                raise AppError(f"{event_month} is closed. Entries can only go into {month}.")
+            self._append(month, [event])
+            return event, Ledger([*ledger.events, event])
+
+    def delete_entry(self, pick: Callable[[Ledger], Event]) -> tuple[Event, Ledger]:
+        """Permanently remove one entry from the active month (keeps ledger.jsonl.prev)."""
+        with self.locked():
+            month = self._require_active()
+            ledger = Ledger(self._read(month))
+            target = pick(ledger)
+            remaining = [e for e in ledger.events if e.id != target.id]
+            path = self.ledger_path(month)
+            shutil.copy2(path, path.with_name(path.name + ".prev"))
+            atomic_write(path, serialize(remaining))
+            return target, Ledger(remaining)
+
+    # -- recurring ---------------------------------------------------------- #
+    def _read_recurring(self) -> list[dict]:
+        try:
+            data = json.loads(self.recurring_path.read_text(encoding="utf-8"))
+            items = data["recurring"]
+            for t in items:
+                if (not isinstance(t["name"], str) or isinstance(t["amount"], bool)
+                        or not isinstance(t["amount"], int) or t["amount"] <= 0
+                        or not isinstance(t.get("tags", []), list)):
+                    raise ValueError("bad entry")
+            return [{"name": t["name"], "amount": t["amount"], "tags": list(t.get("tags", []))} for t in items]
+        except FileNotFoundError:
+            return []
+        except (ValueError, KeyError, TypeError) as e:
+            raise AppError(f"Corrupt recurring file: {self.recurring_path} ({e})") from e
+
+    def load_recurring(self) -> list[dict]:
+        with self.locked():
+            return self._read_recurring()
+
+    def update_recurring(self, mutate: Callable[[list[dict]], list[dict]]) -> list[dict]:
+        with self.locked():
+            items = mutate(self._read_recurring())
+            atomic_write(self.recurring_path, json.dumps({"recurring": items}, indent=2, ensure_ascii=False) + "\n")
+            return items
+
+    # -- config ------------------------------------------------------------- #
+    def load_config(self) -> dict:
+        try:
+            data = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except ValueError as e:
+            raise AppError(f"Corrupt config file: {self.config_path}") from e
+        if not isinstance(data, dict):
+            raise AppError(f"Corrupt config file: {self.config_path}")
+        return data
+
+    @property
+    def currency(self) -> str:
+        return str(self.load_config().get("currency", DEFAULT_CURRENCY))
+
+    def set_currency(self, currency: str) -> str:
+        currency = currency.strip().upper()
+        if not re.fullmatch(r"\S{1,8}", currency):
+            raise AppError("Currency must be 1-8 characters with no spaces, e.g. BDT or USD")
+        cfg = self.load_config()
+        cfg["currency"] = currency
+        atomic_write(self.config_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+        return currency
 
 
-def now_str() -> str:
-    return datetime.now().strftime(DATE_FORMAT)
+# --------------------------------------------------------------------------- #
+# Parsing & formatting
+# --------------------------------------------------------------------------- #
 
-
-def normalize_identifier(value: str) -> str:
-    """Use a stable key for matching reservation IDs case-insensitively."""
-    return value.strip().lower()
-
-
-def parse_legacy_commit_text(text: str) -> Dict[str, str]:
-    parts = [p.strip() for p in text.split(",")]
-    if len(parts) < 3:
-        raise AppError('Commit text must look like: "source, add/spend, amount[, note]"')
-    source = parts[0]
-    action = parts[1].lower()
-    amount = parts[2]
-    note = ", ".join(parts[3:]).strip() if len(parts) > 3 else ""
-    return {"source": source, "action": action, "amount": amount, "note": note}
-
-
-def parse_amount(value: str) -> float:
-    try:
-        amount = float(value)
-    except ValueError as e:
-        raise AppError(f"Invalid amount: {value}") from e
-    if amount <= 0:
+def parse_amount(text: str) -> int:
+    """'1,200.50' -> 120050 minor units. Rejects nan/inf/zero/negatives/3+ decimals."""
+    cleaned = text.strip()
+    if not AMOUNT_RE.match(cleaned):
+        raise AppError(f"Invalid amount: {text!r} (digits with up to 2 decimals, e.g. 1200 or 89.50)")
+    whole, _, frac = cleaned.replace(",", "").partition(".")
+    minor = int(whole) * 100 + int(frac.ljust(2, "0") or 0)
+    if minor <= 0:
         raise AppError("Amount must be greater than 0")
-    return amount
+    return minor
 
 
-def normalize_action(action: str) -> str:
-    a = action.strip().lower()
-    if a in {"add", "income", "in", "credit"}:
-        return "add"
-    if a in {"spend", "expense", "out", "debit"}:
-        return "spend"
-    raise AppError("Action must be add or spend")
+def format_money(minor: int, currency: str) -> str:
+    sign = "-" if minor < 0 else ""
+    whole, frac = divmod(abs(minor), 100)
+    body = f"{whole:,}" + (f".{frac:02d}" if frac else "")
+    return f"{currency} {sign}{body}"
 
 
-def format_money(value: float, currency: str) -> str:
-    rounded = round(value, 2)
-    if float(int(rounded)) == rounded:
-        return f"{currency} {int(rounded)}"
-    return f"{currency} {rounded:.2f}"
+def signed_money(minor: int, currency: str) -> str:
+    if minor == 0:
+        return format_money(0, currency)
+    return ("+" if minor > 0 else "-") + format_money(abs(minor), currency)
 
 
-def summarize(txs: List[Transaction]) -> Dict[str, float]:
-    total = 0.0
-    for tx in txs:
-        total += tx.signed_amount
-    return {"total": total}
+def plain_money(minor: int) -> str:
+    whole, frac = divmod(abs(minor), 100)
+    return f"{'-' if minor < 0 else ''}{whole}.{frac:02d}"
 
 
-def reservation_total(reservations: List[Reservation]) -> float:
-    return sum(r.amount for r in reservations)
+def fmt_tags(tags: Iterable[str]) -> str:
+    return " ".join(f":{t}" for t in tags)
 
 
-def print_table(headers: List[str], rows: List[List[str]]) -> None:
-    """Print a simple pretty table with ASCII borders."""
+def clean_text(text: str) -> str:
+    """Collapse tabs/newlines/runs of spaces so stored text is always one tidy line."""
+    return " ".join(text.split())
+
+
+def split_description(words: list[str]) -> tuple[str, str]:
+    """'Croissant Burger @lake cafe' -> (source='lake cafe', note='Croissant Burger').
+    Without an '@', the whole text is the source."""
+    text = clean_text(" ".join(words))
+    m = re.search(r"(?:^|\s)@(.*)$", text)
+    if m:
+        source = m.group(1).strip()
+        if not source:
+            raise AppError("Nothing after '@'. Name the source, e.g. @lakeviewcafe")
+        return source, text[: m.start()].strip()
+    if not text:
+        raise AppError("Provide a source or description")
+    return text, ""
+
+
+def fmt_ts(ts: str) -> str:
+    return datetime.fromisoformat(ts).strftime("%Y-%m-%d %H:%M")
+
+
+def display_width(s: str) -> int:
+    width = 0
+    for ch in s:
+        if unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
+
+
+def render_table(headers: list[str], rows: list[list[str]], aligns: str = "") -> str:
+    aligns = aligns or "<" * len(headers)
+    rows = [[re.sub(r"[\r\n\t]+", " ", str(c)) for c in r] for r in rows]
+    widths = [max(display_width(c) for c in col) for col in zip(headers, *rows)]
+
+    def line(cells: list[str]) -> str:
+        out = []
+        for cell, w, a in zip(cells, widths, aligns):
+            pad = " " * (w - display_width(cell))
+            out.append(pad + cell if a == ">" else cell + pad)
+        return "  ".join(out).rstrip()
+
+    return "\n".join([line(headers), "  ".join("-" * w for w in widths), *map(line, rows)])
+
+
+def warn(message: str) -> None:
+    print(f"warning: {message}", file=sys.stderr)
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def month_note(store: Store, month: str) -> str:
+    if store.is_closed(month):
+        return "(closed)"
+    if month < current_month():
+        return "(ended - run: money archive)"
+    return f"({plural(days_left(month), 'day')} left)"
+
+
+def nudge(store: Store, month: str) -> None:
+    if not store.is_closed(month) and month < current_month():
+        warn(f"{month} has ended. Run: money archive")
+
+
+# --------------------------------------------------------------------------- #
+# Commands
+# --------------------------------------------------------------------------- #
+
+def cmd_init(store: Store, args: argparse.Namespace) -> int:
+    created = store.ensure_initialized()
+    print(f"Initialized money in {store.root}" if created else f"Already initialized: {store.root}")
+    return 0
+
+
+def cmd_record(store: Store, args: argparse.Namespace) -> int:
+    amount = parse_amount(args.amount)
+    words, raw_tags = extract_tags(args.words)
+    tags = merge_tags(raw_tags, args.tag or [])
+    source, note = split_description(words)
+    ts = resolve_timestamp(args.date)
+    event, ledger = store.commit(
+        lambda _l: Event(new_id(), ts, args.kind, amount, source, note, tags=tags))
+    cur = store.currency
+    print(f"Recorded {event.id[:8]}: {source} {signed_money(event.signed, cur)}"
+          + (f"  {fmt_tags(tags)}" if tags else ""))
+    if event.kind is Kind.SPEND:
+        if ledger.total < 0:
+            warn("Total balance is now negative. That's real debt (or a missing income entry).")
+        elif ledger.available < 0:
+            warn("You're now spending into money you've reserved. Available is below zero.")
+    return 0
+
+
+def cmd_reserve(store: Store, args: argparse.Namespace) -> int:
+    amount = parse_amount(args.amount)
+    words, raw_tags = extract_tags(args.name)
+    tags = merge_tags(raw_tags, args.tag or [])
+    label = clean_text(" ".join(words))
+    if not label:
+        raise AppError("Reservation name cannot be empty")
+
+    def build(ledger: Ledger) -> Event:
+        if ledger.find_reservation(label):
+            raise AppError(f"Active reservation already exists for: {label}")
+        return Event(new_id(), now_ts(), Kind.RESERVE, amount, source=label, key=normalize_key(label), tags=tags)
+
+    _, ledger = store.commit(build)
+    print(f"Reserved {format_money(amount, store.currency)} for {label}"
+          + (f"  {fmt_tags(tags)}" if tags else ""))
+    if ledger.available < 0:
+        warn("This reservation pushes available money below zero. Record the income first, "
+             "or this money is already committed elsewhere.")
+    return 0
+
+
+def _close_reservation(store: Store, name_words: list[str], kind: Kind,
+                       amount_text: Optional[str] = None) -> tuple[Event, Ledger]:
+    name = " ".join(name_words).strip()
+
+    def build(ledger: Ledger) -> Event:
+        res = ledger.find_reservation(name)
+        if not res:
+            active = ", ".join(r.label for r in ledger.reservations.values())
+            hint = f" Active: {active}" if active else " There are no active reservations."
+            raise AppError(f"No active reservation found for: {name}.{hint}")
+        amount = parse_amount(amount_text) if amount_text else res.amount
+        return Event(new_id(), now_ts(), kind, amount, source=res.label, key=res.key, ref=res.id, tags=res.tags)
+
+    event, ledger = store.commit(build)
+    assert event is not None
+    return event, ledger
+
+
+def cmd_settle(store: Store, args: argparse.Namespace) -> int:
+    event, ledger = _close_reservation(store, args.name, Kind.SETTLE, args.amount)
+    cur = store.currency
+    reserved = ledger.by_id[event.ref].amount
+    msg = f"Settled {event.source}: {format_money(event.amount, cur)}"
+    if event.amount != reserved:
+        msg += f" (reserved {format_money(reserved, cur)})"
+    print(msg)
+    if ledger.total < 0:
+        warn("You settled more than you have. Total balance is now negative.")
+    return 0
+
+
+def cmd_release(store: Store, args: argparse.Namespace) -> int:
+    event, _ = _close_reservation(store, args.name, Kind.RELEASE)
+    print(f"Released {event.source}: {format_money(event.amount, store.currency)} is available again.")
+    return 0
+
+
+def _finish_delete(store: Store, target: Event) -> int:
+    print(f"Deleted {target.id[:8]}: {target.kind.value} {target.source} "
+          f"{format_money(target.amount, store.currency)}".rstrip())
+    if target.kind in CLOSING_KINDS:
+        print(f"   Reservation '{target.source}' is active again.")
+    return 0
+
+
+def cmd_delete(store: Store, args: argparse.Namespace) -> int:
+    target, _ = store.delete_entry(lambda l: check_deletable(l, l.resolve(args.id)))
+    return _finish_delete(store, target)
+
+
+def cmd_undo(store: Store, args: argparse.Namespace) -> int:
+    def pick(ledger: Ledger) -> Event:
+        target = next((e for e in reversed(ledger.events) if not e.sys), None)
+        if target is None:
+            raise AppError("Nothing to undo")
+        return check_deletable(ledger, target)
+
+    target, _ = store.delete_entry(pick)
+    return _finish_delete(store, target)
+
+
+def tx_rows(ledger: Ledger) -> list[tuple[Event, int]]:
+    running, rows = 0, []
+    for e in ledger.money_events():
+        running += e.signed
+        rows.append((e, running))
+    return rows
+
+
+def print_tx_table(rows: list[tuple[Event, int]], cur: str) -> None:
     if not rows:
-        widths = [len(h) for h in headers]
-    else:
-        widths = [len(h) for h in headers]
-        for row in rows:
-            for i, cell in enumerate(row):
-                widths[i] = max(widths[i], len(str(cell)))
-
-    def line(sep: str) -> str:
-        return "+" + "+".join(sep * (w + 2) for w in widths) + "+"
-
-    def row_line(values: List[str]) -> str:
-        return "|" + "|".join(f" {str(v).ljust(w)} " for v, w in zip(values, widths)) + "|"
-
-    print(line("-"))
-    print(row_line(headers))
-    print(line("="))
-    for row in rows:
-        print(row_line(row))
-        print(line("-"))
-
-
-def print_tx_table(txs: List[Transaction], currency: str) -> None:
-    if not txs:
-        print("No transactions yet.")
+        print("No transactions found.")
         return
-
-    headers = ["ID", "Date", "Action", "Source", "Amount", "Note"]
-    rows = []
-    for tx in txs:
-        rows.append([
-            tx.id[:8],
-            tx.timestamp,
-            tx.action,
-            tx.source,
-            format_money(tx.amount, currency),
-            tx.note,
-        ])
-    print_table(headers, rows)
+    body = [
+        [e.id[:8], fmt_ts(e.ts), e.kind.value, e.source, signed_money(e.signed, cur),
+         format_money(bal, cur), fmt_tags(e.tags), e.note]
+        for e, bal in rows
+    ]
+    print(render_table(["ID", "Date", "Type", "Source", "Amount", "Balance", "Tags", "Note"], body, "<<<<>><<"))
 
 
-def print_reservation_table(reservations: List[Reservation], currency: str) -> None:
-    if not reservations:
+def cmd_log(store: Store, args: argparse.Namespace) -> int:
+    if args.limit is not None and args.limit <= 0:
+        raise AppError("--limit must be a positive number")
+    month, ledger = store.snapshot(args.month)
+    nudge(store, month)
+    cur = store.currency
+    wanted = merge_tags([args.tag]) if args.tag else ()
+
+    if args.all:
+        events = [e for e in reversed(ledger.events) if all(t in e.tags for t in wanted)][: args.limit]
+        if not events:
+            print("No entries found.")
+            return 0
+        body = []
+        for e in events:
+            amount = signed_money(e.signed, cur) if e.kind in MONEY_KINDS else format_money(e.amount, cur)
+            body.append([e.id[:8], fmt_ts(e.ts), e.kind.value, e.source, amount, fmt_tags(e.tags), e.note])
+        print(render_table(["ID", "Date", "Event", "Detail", "Amount", "Tags", "Note"], body, "<<<<><<"))
+        return 0
+
+    rows = [(e, bal) for e, bal in tx_rows(ledger) if all(t in e.tags for t in wanted)]
+    rows.reverse()  # newest first; running balances were computed chronologically
+    print_tx_table(rows[: args.limit], cur)
+    return 0
+
+
+def cmd_search(store: Store, args: argparse.Namespace) -> int:
+    query = " ".join(args.query).strip().casefold()
+
+    def haystack(e: Event) -> str:
+        return " ".join([e.source, e.note, e.kind.value, e.ts, plain_money(e.amount), fmt_tags(e.tags)]).casefold()
+
+    rows: list[tuple[Event, int]] = []
+    for _, ledger in store.snapshots(args.month, everything=args.month is None):
+        rows += [(e, bal) for e, bal in tx_rows(ledger) if query in haystack(e)]
+    rows.reverse()
+    print_tx_table(rows, store.currency)
+    return 0
+
+
+def cmd_status(store: Store, args: argparse.Namespace) -> int:
+    month, ledger = store.snapshot(args.month)
+    cur = store.currency
+    count = len(ledger.reservations)
+    print(f"Month:     {month} {month_note(store, month)}")
+    print(f"Total:     {format_money(ledger.total, cur)}")
+    print(f"Reserved:  {format_money(ledger.reserved, cur)}" + (f"  ({count} active)" if count else ""))
+    print(f"Available: {format_money(ledger.available, cur)}")
+    if ledger.available < 0:
+        warn("Available is below zero. Usually an income entry is missing, or money is already spoken for.")
+    return 0
+
+
+def cmd_balance(store: Store, args: argparse.Namespace) -> int:
+    _, ledger = store.snapshot(args.month)
+    print(format_money(ledger.total, store.currency))
+    return 0
+
+
+def cmd_reserves(store: Store, args: argparse.Namespace) -> int:
+    _, ledger = store.snapshot(args.month)
+    cur = store.currency
+    if not ledger.reservations:
         print("No active reservations.")
-        return
+        return 0
+    body = [[r.label, fmt_ts(r.created_at), format_money(r.amount, cur), fmt_tags(r.tags)]
+            for r in ledger.reservations.values()]
+    print(render_table(["Name", "Created", "Amount", "Tags"], body, "<<><"))
+    print(f"\nTotal reserved: {format_money(ledger.reserved, cur)}")
+    return 0
 
-    headers = ["ID", "Created", "Amount"]
-    rows = []
-    for res in reservations:
-        rows.append([
-            res.label,
-            res.created_at,
-            format_money(res.amount, currency),
-        ])
-    print_table(headers, rows)
+
+def cmd_months(store: Store, args: argparse.Namespace) -> int:
+    months = store.months()
+    if not months:
+        print("No months yet. Run: money init")
+        return 0
+    cur, today, body = store.currency, current_month(), []
+    for m in months:
+        ledger = store.load(m)
+        if store.is_closed(m):
+            status = "closed" if store.closed_ok(m) else "closed - MODIFIED after close!"
+        elif m < today:
+            status = "open - ended, run: money archive"
+        else:
+            status = "open"
+        body.append([m, str(ledger.entry_count), format_money(ledger.total, cur),
+                     format_money(ledger.reserved, cur), status])
+    print(render_table(["Month", "Entries", "Balance", "Reserved", "Status"], body, "<>>><"))
+    return 0
+
+
+def cmd_summary(store: Store, args: argparse.Namespace) -> int:
+    cur = store.currency
+    events = [e for _, ledger in store.snapshots(args.month, everything=args.month is None)
+              for e in ledger.events if e.kind in FLOW_KINDS]
+    groups: dict[str, list[int]] = {}
+    labels: dict[str, str] = {}
+    for e in events:
+        if args.by == "month":
+            pairs = [(e.ts[:7], e.ts[:7])]
+        elif args.by == "source":
+            pairs = [(e.source.casefold(), e.source)]
+        else:
+            pairs = [(t, f":{t}") for t in e.tags] or [("", "(untagged)")]
+        for key, label in pairs:
+            labels.setdefault(key, label)
+            groups.setdefault(key, [0, 0])[0 if e.signed > 0 else 1] += e.amount
+    if not groups:
+        print("No transactions yet.")
+        return 0
+    keys = sorted(groups) if args.by == "month" else sorted(groups, key=lambda k: -sum(groups[k]))
+    tin = sum(e.amount for e in events if e.signed > 0)
+    tout = sum(e.amount for e in events if e.signed < 0)
+    body = [[labels[k], format_money(groups[k][0], cur), format_money(groups[k][1], cur),
+             format_money(groups[k][0] - groups[k][1], cur)] for k in keys]
+    body.append(["TOTAL", format_money(tin, cur), format_money(tout, cur), format_money(tin - tout, cur)])
+    print(render_table([args.by.capitalize(), "In", "Out", "Net"], body, "<>>>"))
+    if args.by == "tag":
+        print("\n(an entry with several tags counts under each; TOTAL counts it once)")
+    return 0
+
+
+def cmd_export(store: Store, args: argparse.Namespace) -> int:
+    writer = csv.writer(sys.stdout, lineterminator="\n")
+    writer.writerow(["id", "date", "type", "source", "amount", "tags", "note"])
+    for _, ledger in store.snapshots(args.month, everything=args.all):
+        for e in ledger.money_events():
+            writer.writerow([e.id, e.ts, e.kind.value, e.source, plain_money(e.signed),
+                             " ".join(e.tags), e.note])
+    return 0
+
+
+def cmd_config(store: Store, args: argparse.Namespace) -> int:
+    if args.currency:
+        print(f"Currency set to {store.set_currency(args.currency)}")
+    else:
+        print(json.dumps(store.load_config(), indent=2, ensure_ascii=False))
+    return 0
+
+
+# -- recurring reservations -------------------------------------------------- #
+
+def cmd_recur_add(store: Store, args: argparse.Namespace) -> int:
+    amount = parse_amount(args.amount)
+    words, raw_tags = extract_tags(args.name)
+    tags = merge_tags(raw_tags, args.tag or [])
+    name = clean_text(" ".join(words))
+    if not name:
+        raise AppError("Recurring name cannot be empty")
+    key = normalize_key(name)
+    if any(normalize_key(t["name"]) == key for t in store.load_recurring()):
+        raise AppError(f"Recurring '{name}' already exists. Remove it first: money recur remove {name}")
+
+    def build(ledger: Ledger) -> Optional[Event]:  # also reserve it for the current month
+        if ledger.find_reservation(name):
+            return None
+        return Event(new_id(), now_ts(), Kind.RESERVE, amount, source=name, key=key, tags=tags)
+
+    event, _ = store.commit(build)
+    store.update_recurring(lambda items: [*items, {"name": name, "amount": amount, "tags": list(tags)}])
+    cur = store.currency
+    print(f"Recurring: {name} {format_money(amount, cur)}/month" + (f"  {fmt_tags(tags)}" if tags else ""))
+    print("   Reserved for this month too." if event else "   Already reserved this month; starts fresh next month.")
+    return 0
+
+
+def cmd_recur_list(store: Store, args: argparse.Namespace) -> int:
+    items = store.load_recurring()
+    if not items:
+        print("No recurring reservations.")
+        return 0
+    cur = store.currency
+    body = [[t["name"], format_money(t["amount"], cur), fmt_tags(t["tags"])] for t in items]
+    print(render_table(["Name", "Amount/month", "Tags"], body, "<>>"))
+    return 0
+
+
+def cmd_recur_remove(store: Store, args: argparse.Namespace) -> int:
+    name = " ".join(args.name).strip()
+    key = normalize_key(name)
+    removed: list[dict] = []
+
+    def mutate(items: list[dict]) -> list[dict]:
+        removed.extend(t for t in items if normalize_key(t["name"]) == key)
+        return [t for t in items if normalize_key(t["name"]) != key]
+
+    store.update_recurring(mutate)
+    if not removed:
+        raise AppError(f"No recurring reservation named: {name}")
+    print(f"Removed recurring {removed[0]['name']}. Existing reservations are untouched.")
+    return 0
+
+
+# -- archive ------------------------------------------------------------------ #
+
+def cmd_archive(store: Store, args: argparse.Namespace) -> int:
+    if args.undo:
+        return _archive_undo(store)
+    cur, today = store.currency, current_month()
+    with store.locked():
+        months = store.months()
+        opens = [m for m in months if not store.is_closed(m)]
+        if len(opens) > 1:
+            raise AppError(f"More than one open month ({', '.join(opens)}). Fix by hand.")
+        if opens:
+            src, needs_close = opens[0], True
+            if src >= today:
+                raise AppError(f"{src} hasn't ended yet ({plural(days_left(src), 'day')} left). "
+                               "Archive after it ends.")
+        elif months:  # recovery: a month was closed but its successor was never created
+            src, needs_close = months[-1], False
+            if src >= today:
+                raise AppError(f"Nothing to archive: {src} is already closed and still current.")
+        else:
+            raise AppError("Nothing to archive. Run: money init")
+        if store.month_dir(today).exists():
+            raise AppError(f"{today} already exists. Fix by hand.")
+
+        ledger = Ledger(store._read(src))
+        start = month_start(today).isoformat(timespec="seconds")
+        note = f"carried from {src}"
+        events = [Event(new_id(), start, Kind.OPEN, ledger.total, "Opening balance", note, sys=True)]
+        taken = set()
+        for r in ledger.reservations.values():
+            taken.add(r.key)
+            events.append(Event(new_id(), start, Kind.RESERVE, r.amount, r.label, note, r.key,
+                                tags=r.tags, since=r.created_at, sys=True))
+        recurring = store._read_recurring()
+        renamed: list[tuple[str, str]] = []
+        for t in recurring:
+            label = t["name"]
+            if normalize_key(label) in taken:  # last month's one is still unsettled
+                base, n = f"{label} {today}", 1
+                label = base
+                while normalize_key(label) in taken:
+                    n += 1
+                    label = f"{base}-{n}"
+                renamed.append((t["name"], label))
+            taken.add(normalize_key(label))
+            events.append(Event(new_id(), start, Kind.RESERVE, t["amount"], label, "recurring",
+                                normalize_key(label), tags=merge_tags(t["tags"]), sys=True))
+
+        if needs_close:
+            store._write_closed(src, ledger)
+        store._create_month(today, events)
+
+    if needs_close:
+        n = ledger.entry_count
+        print(f"Closed {src}: {format_money(ledger.total, cur)} ({n} entr{'y' if n == 1 else 'ies'}).")
+    print(f"Opened {today} with {format_money(ledger.total, cur)}; "
+          f"{plural(len(ledger.reservations), 'reservation')} carried over, {len(recurring)} recurring added.")
+    for original, label in renamed:
+        print(f"   '{original}' is still unsettled from {src}, so this month's is named '{label}'.")
+    gap = months_between(src, today)
+    if gap:
+        print(f"   No ledger exists for: {', '.join(gap)}")
+    return 0
+
+
+def _archive_undo(store: Store) -> int:
+    with store.locked():
+        months = store.months()
+        opens = [m for m in months if not store.is_closed(m)]
+        if len(opens) > 1:
+            raise AppError(f"More than one open month ({', '.join(opens)}). Fix by hand.")
+        if opens:
+            cur_month = opens[0]
+            earlier = [m for m in months if m < cur_month and store.is_closed(m)]
+            if not earlier:
+                raise AppError("There's no earlier month to reopen.")
+            if any(not e.sys for e in store._read(cur_month)):
+                raise AppError(f"{cur_month} already has entries, so the archive can't be undone. "
+                               "Undo or delete them first.")
+            shutil.rmtree(store.month_dir(cur_month))
+            prev = earlier[-1]
+        else:
+            closed = [m for m in months if store.is_closed(m)]
+            if not closed:
+                raise AppError("Nothing to undo.")
+            cur_month, prev = None, closed[-1]
+        store.closed_path(prev).unlink()
+        os.chmod(store.ledger_path(prev), 0o644)
+    print((f"Removed {cur_month} and reopened {prev}." if cur_month else f"Reopened {prev}."))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+
+EPILOG = """\
+quick entry:
+  money +500 "Mom's vault"                          income (quote apostrophes!)
+  money -90 Croissant Burger @lakeviewcafe :food    spend: note, @source, :tags
+  money -90 cafe :food :treat  (or :food:treat)     several tags
+  money -90 cafe -t food -t treat                   tags via flag, same thing
+  money -90 cafe --date yesterday                   backdate (within the active month)
+
+options go after the description. Bare `money` shows status. Data lives in ~/money
+(or $MONEY_DIR): one folder per month; `money archive` closes a finished month.
+"""
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="money", description="Git-like money tracker.")
-    sub = parser.add_subparsers(dest="command")
+    parser = argparse.ArgumentParser(
+        prog="money", description="Git-like money tracker, one folder per month.", epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--version", action="version", version=f"money {__version__}")
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
 
-    sub.add_parser("init", help="Initialize a new money repo in the current folder")
+    def command(name: str, help: str, func, aliases: tuple = (), **defaults) -> argparse.ArgumentParser:
+        sp = sub.add_parser(name, help=help, description=help, aliases=list(aliases))
+        sp.set_defaults(func=func, **defaults)
+        return sp
 
-    commit = sub.add_parser("commit", help='Add a transaction, like git commit')
-    commit.add_argument("text", nargs="?", help='"source, add/spend, amount[, note]"')
-    commit.add_argument("--source", help="Transaction source/label")
-    commit.add_argument("--action", help="add or spend")
-    commit.add_argument("--amount", help="Positive amount")
-    commit.add_argument("--note", default="", help="Optional note")
+    def tag_flag(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument("-t", "--tag", action="append", help="add a tag (repeatable; same as :tag)")
 
-    sub.add_parser("log", help="Show all transactions")
-    sub.add_parser("status", help="Show a compact money summary")
-    sub.add_parser("balance", help="Show current total balance")
-    sub.add_parser("reserves", help="Show active reservations")
+    def month_flag(sp: argparse.ArgumentParser, help: str = "month to read, e.g. 2026-09 (default: active)") -> None:
+        sp.add_argument("-m", "--month", help=help)
 
-    reserve = sub.add_parser("reserve", help="Reserve money for a specific identifier")
-    reserve.add_argument("amount", help="Amount to reserve")
-    reserve.add_argument("identifier", help="Reservation identifier")
+    command("init", "Create ~/money and the current month", cmd_init, store_mode="init")
 
-    settle = sub.add_parser("settle", help="Settle a reservation in full")
-    settle.add_argument("identifier", help="Reservation identifier")
+    sp = command("archive", "Close the finished month and open the current one", cmd_archive)
+    sp.add_argument("--undo", action="store_true", help="reopen the previous month (only if the new one is untouched)")
+    command("months", "List all months", cmd_months)
 
-    delete = sub.add_parser("delete", help="Delete a transaction by ID")
-    delete.add_argument("id", help="Transaction ID prefix or full ID")
+    for name, kind, desc in (("add", Kind.ADD, "Record income (same as: money +AMOUNT ...)"),
+                             ("spend", Kind.SPEND, "Record an expense (same as: money -AMOUNT ...)")):
+        sp = command(name, desc, cmd_record, kind=kind)
+        sp.add_argument("amount", help="e.g. 500, 89.50, 1,200")
+        sp.add_argument("words", nargs="*", metavar="description", help="source, or: note @source :tags")
+        sp.add_argument("-d", "--date", help="YYYY-MM-DD, 'YYYY-MM-DD HH:MM', today, yesterday")
+        tag_flag(sp)
 
-    search = sub.add_parser("search", help="Search by source, note, or action")
-    search.add_argument("query", help="Search text")
+    sp = command("reserve", "Set money aside for a named purpose", cmd_reserve)
+    sp.add_argument("amount")
+    sp.add_argument("name", nargs="+")
+    tag_flag(sp)
 
-    sub.add_parser("undo", help="Remove the last transaction")
+    sp = command("settle", "Turn a reservation into a real spend", cmd_settle)
+    sp.add_argument("name", nargs="+")
+    sp.add_argument("--amount", help="actual amount paid, if different from the reserved amount")
 
-    config = sub.add_parser("config", help="Change settings")
-    config.add_argument("--currency", help="Set currency label, e.g. BDT, USD")
+    sp = command("release", "Cancel a reservation without spending", cmd_release)
+    sp.add_argument("name", nargs="+")
+
+    sp = command("delete", "Permanently delete an entry by ID (previous file kept as .prev)", cmd_delete)
+    sp.add_argument("id", help="entry ID or unique prefix")
+    command("undo", "Delete the most recent entry", cmd_undo)
+
+    sp = command("log", "Show transactions with a running balance", cmd_log)
+    sp.add_argument("-n", "--limit", type=int, help="show only the newest N rows")
+    sp.add_argument("-t", "--tag", help="only entries with this tag (e.g. food or :food)")
+    sp.add_argument("-a", "--all", action="store_true", help="show every event, including reserves and releases")
+    month_flag(sp)
+
+    sp = command("search", "Search source, note, tags, type, date or amount (all months)", cmd_search)
+    sp.add_argument("query", nargs="+")
+    month_flag(sp, "limit to one month, e.g. 2026-09")
+
+    sp = command("status", "Month, total, reserved and available", cmd_status)
+    month_flag(sp)
+    sp = command("balance", "Show total balance", cmd_balance)
+    month_flag(sp)
+    sp = command("reserves", "Show active reservations", cmd_reserves)
+    month_flag(sp)
+
+    sp = command("summary", "Totals grouped by month, source or tag (all months)", cmd_summary)
+    sp.add_argument("--by", choices=("month", "source", "tag"), default="month")
+    month_flag(sp, "limit to one month, e.g. 2026-09")
+
+    sp = command("export", "Print transactions as CSV", cmd_export)
+    sp.add_argument("--all", action="store_true", help="include every month")
+    month_flag(sp)
+
+    sp = command("config", "Show or change settings", cmd_config)
+    sp.add_argument("--currency", help="currency label, e.g. BDT, USD")
+
+    recur = sub.add_parser("recur", help="Manage recurring monthly reservations",
+                           description="Recurring reservations are re-created at the start of every month.")
+    rsub = recur.add_subparsers(dest="recur_action", metavar="<action>", required=True)
+    sp = rsub.add_parser("add", help="Add a recurring reservation (also reserves it this month)")
+    sp.set_defaults(func=cmd_recur_add)
+    sp.add_argument("amount")
+    sp.add_argument("name", nargs="+", help="name, plus optional :tags")
+    tag_flag(sp)
+    rsub.add_parser("list", help="List recurring reservations").set_defaults(func=cmd_recur_list)
+    sp = rsub.add_parser("remove", help="Stop a recurring reservation")
+    sp.set_defaults(func=cmd_recur_remove)
+    sp.add_argument("name", nargs="+")
 
     return parser
 
 
-def parse_quick_entry(argv: List[str]) -> Optional[Dict[str, str]]:
-    """Supports shorthand like:
-    money +500 Salary
-    money -90 Burger @place
+_HELP = {"-h", "--help"}
+_DATE_TAG = {"-d", "--date", "-t", "--tag"}
+# command -> (flags that take a value, flags that don't, accepts free-text words)
+_FLAGS: dict[str, tuple[set, set, bool]] = {
+    "add": (_DATE_TAG, _HELP, True),
+    "spend": (_DATE_TAG, _HELP, True),
+    "reserve": ({"-t", "--tag"}, _HELP, True),
+    "settle": ({"--amount"}, _HELP, True),
+    "release": (set(), _HELP, True),
+    "search": ({"-m", "--month"}, _HELP, True),
+    "recur add": ({"-t", "--tag"}, _HELP, True),
+    "recur remove": (set(), _HELP, True),
+    "log": ({"-n", "--limit", "-t", "--tag", "-m", "--month"}, _HELP | {"-a", "--all"}, False),
+}
+
+
+def protect_dashes(argv: list[str]) -> list[str]:
+    """Let free text and tag values start with '-' ('-cafe', '->', '-5% off', '-t -lead').
+
+    argparse reads any '-word' as an option. A leading space makes it a plain word
+    instead; clean_text()/normalize_tag() strip that space again later.
     """
     if not argv:
-        return None
+        return argv
+    head = 2 if argv[0] == "recur" and len(argv) > 1 else 1
+    spec = _FLAGS.get(" ".join(argv[:head]))
+    if spec is None:
+        return argv
+    valued, plain, words_ok = spec
 
-    first = argv[0]
-    if not (first.startswith("+") or first.startswith("-")):
-        return None
+    def shield(tok: str) -> str:
+        return " " + tok if len(tok) > 1 and tok.startswith("-") else tok
 
-    sign = first[0]
-    amount_str = first[1:]
-    amount = parse_amount(amount_str)
-
-    rest = " ".join(argv[1:]).strip()
-    if not rest:
-        raise AppError("Provide a source or description")
-
-    if "@" in rest:
-        note_part, source_part = rest.split("@", 1)
-        note = note_part.strip()
-        source = source_part.strip()
-    else:
-        source = rest
-        note = ""
-
-    action = "add" if sign == "+" else "spend"
-    return {
-        "source": source,
-        "action": action,
-        "amount": str(amount),
-        "note": note,
-    }
+    out, i = list(argv[:head]), head
+    while i < len(argv):
+        tok = argv[i]
+        name, eq, _ = tok.partition("=")
+        if name in valued:
+            out.append(tok)
+            if not eq and i + 1 < len(argv):   # its value may start with '-' too
+                i += 1
+                out.append(shield(argv[i]))
+        elif tok in plain or not words_ok:
+            out.append(tok)
+        else:
+            out.append(shield(tok))
+        i += 1
+    return out
 
 
-def resolve_transaction_input(args: argparse.Namespace) -> Dict[str, str]:
-    if args.source or args.action or args.amount:
-        if not (args.source and args.action and args.amount):
-            raise AppError("For flag mode, provide --source, --action, and --amount")
-        return {
-            "source": args.source.strip(),
-            "action": args.action.strip(),
-            "amount": args.amount.strip(),
-            "note": args.note.strip(),
-        }
-
-    if args.text:
-        return parse_legacy_commit_text(args.text)
-
-    raise AppError('Provide either: money commit "source, add/spend, amount[, note]" or use flags.')
+def _prepare_streams() -> None:
+    """Never crash on unencodable characters (e.g. legacy Windows consoles)."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except (ValueError, OSError):
+                pass
 
 
-def show_status(store: MoneyStore) -> int:
-    txs = store.load_transactions()
-    reservations = store.load_reservations()
-    currency = store.load_config().get("currency", "BDT")
+def main(argv: Optional[list[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    _prepare_streams()
 
-    total = summarize(txs)["total"]
-    reserved = reservation_total(reservations)
-    available = total - reserved
-
-    print(f"Total:     {format_money(total, currency)}")
-    print(f"Reserved:  {format_money(reserved, currency)}")
-    print(f"Available: {format_money(available, currency)}")
-
-    if available < 0:
-        print("⚠️ Available is below zero. That usually means the add entry is missing, or money is already spoken for.")
-    return 0
-
-
-def show_balance(store: MoneyStore) -> int:
-    txs = store.load_transactions()
-    currency = store.load_config().get("currency", "BDT")
-    total = summarize(txs)["total"]
-    print(format_money(total, currency))
-    return 0
-
-
-def cmd_init(store: MoneyStore) -> int:
-    store.init()
-    print(f"Initialized money repo in {store.app_dir}")
-    print("   You're ready to start tracking. Stay consistent.")
-    return 0
-
-
-def cmd_commit(store: MoneyStore, args: argparse.Namespace) -> int:
-    store._ensure_initialized()
-    data = resolve_transaction_input(args)
-    source = data["source"].strip()
-    action = normalize_action(data["action"])
-    amount = parse_amount(data["amount"])
-    note = data.get("note", "").strip()
-
-    tx = Transaction(
-        id=uuid4().hex,
-        timestamp=now_str(),
-        source=source,
-        action=action,
-        amount=amount,
-        note=note,
-    )
-    store.add_transaction(tx)
-
-    currency = store.load_config().get("currency", "BDT")
-    sign = "+" if action == "add" else "-"
-    print(f"Recorded {tx.id[:8]}: {source} {sign}{format_money(amount, currency)}")
-    return 0
-
-
-def cmd_reserve(store: MoneyStore, amount_text: str, identifier: str) -> int:
-    store._ensure_initialized()
-    amount = parse_amount(amount_text)
-    label = identifier.strip()
-    if not label:
-        raise AppError("Reservation identifier cannot be empty")
-
-    currency = store.load_config().get("currency", "BDT")
-    tx_total = summarize(store.load_transactions())["total"]
-    reserved_total = reservation_total(store.load_reservations())
-    available_before = tx_total - reserved_total
-
-    reservation = store.add_reservation(label, amount)
-    available_after = available_before - amount
-
-    print(f"Reserved {format_money(amount, currency)} for {reservation.label}")
-    print("   This money is now mentally 'locked' and shouldn't be spent elsewhere.")
-    if available_after < 0:
-        print("⚠️ This reservation pushes available money below zero. That is a real warning, not a typo.")
-        print("   Usually this means you need to record the add first, or this money is already committed elsewhere.")
-    return 0
-
-
-def cmd_settle(store: MoneyStore, identifier: str) -> int:
-    store._ensure_initialized()
-    reservation = store.remove_reservation(identifier)
-
-    # Settling turns the reserved money into a real spend transaction.
-    # Before doing so, we check if this will push total below zero and warn the user.
-    txs = store.load_transactions()
-    current_total = summarize(txs)["total"]
-    if current_total - reservation.amount < 0:
-        print("⚠️ You are about to go into negative balance.")
-        print("   This means you are settling more than you currently have.")
-    tx = Transaction(
-        id=uuid4().hex,
-        timestamp=now_str(),
-        source=reservation.label,
-        action="spend",
-        amount=reservation.amount,
-        note="",
-    )
-    store.add_transaction(tx)
-
-    currency = store.load_config().get("currency", "BDT")
-    print(f"Settled {reservation.label}: {format_money(reservation.amount, currency)}")
-    return 0
-
-
-def cmd_reserves(store: MoneyStore) -> int:
-    reservations = store.load_reservations()
-    currency = store.load_config().get("currency", "BDT")
-    print_reservation_table(reservations, currency)
-    return 0
-
-
-def cmd_delete(store: MoneyStore, tx_id: str) -> int:
-    txs = store.load_transactions()
-    matches = [tx for tx in txs if tx.id.startswith(tx_id)]
-    if not matches:
-        raise AppError(f"No transaction found with ID starting {tx_id}")
-    if len(matches) > 1:
-        raise AppError(f"More than one transaction matches {tx_id}. Use more characters.")
-    if store.delete_transaction(matches[0].id):
-        print(f"Deleted {matches[0].id[:8]}")
-        print("   That transaction is gone from history.")
-        return 0
-    raise AppError("Delete failed")
-
-
-def cmd_undo(store: MoneyStore) -> int:
-    txs = store.load_transactions()
-    if not txs:
-        raise AppError("Nothing to undo")
-    last = txs.pop()
-    store.save_transactions(txs)
-    print(f"Removed last transaction: {last.id[:8]} {last.source} {last.action} {last.amount}")
-    print("   Undo does not restore reservations yet. Be mindful.")
-    return 0
-
-
-def cmd_search(store: MoneyStore, query: str) -> int:
-    txs = store.load_transactions()
-    currency = store.load_config().get("currency", "BDT")
-    q = query.lower().strip()
-    matches = [
-        tx for tx in txs
-        if q in tx.source.lower() or q in tx.note.lower() or q in tx.action.lower() or q in tx.timestamp.lower()
-    ]
-    print_tx_table(list(reversed(matches)), currency)
-    return 0
-
-
-def cmd_config(store: MoneyStore, args: argparse.Namespace) -> int:
-    store.init()
-    if args.currency:
-        store.set_currency(args.currency)
-        print(f"Currency set to {args.currency.upper()}")
-        return 0
-    print(json.dumps(store.load_config(), indent=2, ensure_ascii=False))
-    return 0
-
-
-def main(argv: Optional[List[str]] = None) -> int:
-    argv = argv if argv is not None else sys.argv[1:]
-    store = MoneyStore(Path.cwd())
-
-    # Quick mode: the first token is +amount or -amount.
-    try:
-        quick = parse_quick_entry(argv)
-    except AppError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 2
-
-    if quick:
-        try:
-            store._ensure_initialized()
-            tx = Transaction(
-                id=uuid4().hex,
-                timestamp=now_str(),
-                source=quick["source"],
-                action=quick["action"],
-                amount=float(quick["amount"]),
-                note=quick.get("note", ""),
-            )
-            store.add_transaction(tx)
-            sign = "+" if tx.action == "add" else "-"
-            currency = store.load_config().get("currency", "BDT")
-            print(f"Recorded {tx.id[:8]}: {tx.source} {sign}{format_money(tx.amount, currency)}")
-            if tx.action == "spend":
-                txs = store.load_transactions()
-                total = summarize(txs)["total"]
-                if total < 0:
-                    print("⚠️ Your total balance is now negative. This is real debt.")
-            return 0
-        except AppError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 2
+    if not argv:  # bare `money` -> status
+        argv = ["status"]
+    # Quick mode: "+500 ..." / "-90 ..." becomes "add 500 ..." / "spend 90 ...".
+    elif QUICK_RE.match(argv[0]):
+        argv = ["add" if argv[0][0] == "+" else "spend", argv[0][1:], *argv[1:]]
+    argv = protect_dashes(argv)
 
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    if not args.command:
+    func = getattr(args, "func", None)
+    if func is None:
         parser.print_help()
         return 1
 
     try:
-        if args.command == "init":
-            return cmd_init(store)
-        if args.command == "commit":
-            return cmd_commit(store, args)
-        if args.command == "log":
-            return show_log(store)
-        if args.command == "status":
-            return show_status(store)
-        if args.command == "balance":
-            return show_balance(store)
-        if args.command == "reserves":
-            return cmd_reserves(store)
-        if args.command == "reserve":
-            return cmd_reserve(store, args.amount, args.identifier)
-        if args.command == "settle":
-            return cmd_settle(store, args.identifier)
-        if args.command == "delete":
-            return cmd_delete(store, args.id)
-        if args.command == "undo":
-            return cmd_undo(store)
-        if args.command == "search":
-            return cmd_search(store, args.query)
-        if args.command == "config":
-            return cmd_config(store, args)
-
-        raise AppError(f"Unknown command: {args.command}")
-
+        store = Store.for_init() if getattr(args, "store_mode", "open") == "init" else Store.open()
+        return func(store, args)
     except AppError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
-
-
-def show_log(store: MoneyStore) -> int:
-    txs = store.load_transactions()
-    currency = store.load_config().get("currency", "BDT")
-    print_tx_table(list(reversed(txs)), currency)
-    return 0
+    except BrokenPipeError:  # e.g. `money log | head`
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError, AttributeError):
+            pass
+        return 0
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":
