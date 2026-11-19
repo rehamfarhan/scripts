@@ -1,132 +1,74 @@
-# 📥 MediaFetch (`mediafetch` / `mf`)
+# mediafetch
 
-A blazing-fast, zero-overhead terminal media fetcher and `yt-dlp` wrapper built with **Rust** and **Ratatui**.
+Downloads video and audio from YouTube and similar sites.
 
-Features an instant (<3ms) launch, full-screen alternate buffer interactive dashboard, curated smart presets, automated LRCLIB lyrics tagging (`.lrc` sidecars + ID3 `USLT` frames), clipboard auto-detection, and a pixel-perfect nerdy summary card with real-time stats pills upon download completion.
+`yt-dlp` can do almost anything, but the flags for "1080p video with subtitles and a thumbnail" or "320k MP3 with cover art and synced lyrics" are long, easy to get wrong, and different every time. `mediafetch` puts those combinations behind fixed presets, shows the download in a full-screen TUI, and adds the lyrics step for music.
 
----
+It's a Rust binary wrapping `yt-dlp`, so there's no interpreter startup lag.
 
-## 📋 Technical Overview
+## Presets
 
-- **Language**: Rust (Edition 2021)
-- **UI Engine**: [Ratatui](https://github.com/ratatui/ratatui) + [Crossterm](https://github.com/crossterm-rs/crossterm)
-- **Async Runtime**: [Tokio](https://tokio.rs/)
-- **Core CLI Engine**: `yt-dlp` (native subprocess streaming with `--progress-template`)
-- **Metadata & Lyrics**: [LRCLIB REST API](https://lrclib.net/) + [id3](https://crates.io/crates/id3) crate
-- **Startup Latency**: **< 3ms** (native compiled binary, zero interpreter overhead)
-- **Default Destinations**:
-  - 🎬 Videos (`video`, `shorts`, `archive`): `~/Videos/Downloads`
-  - 🎵 Music & Audio (`music`, `flac`, `podcast`): `~/Music/Downloads`
+| Key | Preset | Format | Destination |
+| --- | --- | --- | --- |
+| `1` | Video | 1080p H.265 MKV, English subtitles, thumbnail | `~/Videos/Downloads` |
+| `2` | Music | 320k MP3, square album art, lyrics | `~/Music/Downloads` |
+| `3` | FLAC | Lossless FLAC, album art, lyrics | `~/Music/Downloads` |
+| `4` | Shorts | 9:16 vertical MP4 | `~/Videos/Downloads` |
+| `5` | Podcast | Opus audio with metadata | `~/Music/Downloads` |
+| `6` | Archive | Best available video and all subtitles | `~/Videos/Downloads` |
 
----
+## What it does
 
-## 🧱 Architecture
+- Opens a full-screen alternate-buffer UI, so the download doesn't spam your scrollback. The terminal is restored on exit or cancel.
+- Starts with the clipboard URL if you run it with no arguments (`wl-paste` on Wayland, `xclip` on X11).
+- Streams progress out of `yt-dlp` and shows speed, ETA and percentage.
+- For audio presets, looks up lyrics on LRCLIB, writes a `.lrc` file next to the track, and embeds unsynced lyrics in the file's tags (ID3 `USLT` for MP3, Vorbis comments for FLAC).
+- Prints a summary table when the download finishes.
 
-The Rust codebase is structured into clean, modular components inside [`src/`](src/):
-
-| Module | Responsibility |
-| :--- | :--- |
-| [**`src/main.rs`**](src/main.rs) | CLI argument parser, Wayland (`wl-paste`) & X11 clipboard auto-detector, event loop runner, desktop notifications, and pixel-perfect summary table printer. |
-| [**`src/ui.rs`**](src/ui.rs) | Full-screen Ratatui alternate buffer renderer, rounded borders, media header card, presets selector, preset inspector, progress gauge, and URL input modal. |
-| [**`src/presets.rs`**](src/presets.rs) | Definitions for all 6 curated presets, destinations, format flags, and post-processing steps. |
-| [**`src/downloader.rs`**](src/downloader.rs) | Multi-threaded async supervisor driving `yt-dlp`, parsing `--progress-template` for live speed/ETA/percentage, and fallbacks for title extraction. |
-| [**`src/lyrics.rs`**](src/lyrics.rs) | LRCLIB client with exact and fuzzy search, ID3v2 `USLT` frame tagger, and `.lrc` companion sidecar file generator. |
-| [**`src/metadata.rs`**](src/metadata.rs) | Fast async JSON stream inspector querying creator, duration, views, and upload date. |
-
----
-
-## 🎯 Smart Presets
-
-MediaFetch eliminates guesswork with 6 curated presets designed for immediate, "no-thinking" execution:
-
-| Key | Preset | Format Spec | Destination | Features & Extras |
-| :---: | :--- | :--- | :--- | :--- |
-| `[1]` | **Video** *(Default)* | 1080p H.265 MKV | `~/Videos/Downloads` | Merged English subtitles (`en.*`), embedded high-res thumbnail |
-| `[2]` | **Music (MP3)** | 320k MP3 | `~/Music/Downloads` | Square album art, LRCLIB synced lyrics (`.lrc`) & ID3 `USLT` tags |
-| `[3]` | **FLAC** | Lossless FLAC | `~/Music/Downloads` | Lossless audio extraction, square album art, embedded lyrics & `.lrc` companion |
-| `[4]` | **Shorts** | 9:16 Vertical MP4 | `~/Videos/Downloads` | Optimized for vertical video formats (Shorts, Reels, TikTok) |
-| `[5]` | **Podcast** | Opus Audio | `~/Music/Downloads` | High-efficiency audio-only Opus format with embedded metadata |
-| `[6]` | **Archive** | Max Quality Video | `~/Videos/Downloads` | Maximum quality preservation with all available subtitles |
-
----
-
-## ✨ Features
-
-- **⚡ Instant Launch (<3ms)**: Starts immediately without Python interpreter lag or cold-start freezes.
-- **🎨 Full-Screen Alternate Buffer TUI**: Runs in private terminal buffer mode (`EnterAlternateScreen`), keeping your shell scrollback clean and restoring your prompt cleanly on exit.
-- **📋 Smart Clipboard Auto-Detect**: Running `mediafetch` without arguments automatically inspects your clipboard (`wl-paste` on Wayland or `xclip` on X11) and loads valid media links instantly.
-- **🎤 Automated LRCLIB Lyrics Tagging**:
-  - Automatically fetches synced and unsynced lyrics from LRCLIB.
-  - Embeds unsynced lyrics directly into MP3 ID3v2 `USLT` frames.
-  - Generates synchronized `.lrc` companion files right alongside the audio file for players like `kew`, `cmus`, or `vlc`.
-- **📊 Nerdy Pixel-Perfect Ending Screen**:
-  - Automatically exits the alternate screen buffer when complete and renders an aligned, high-contrast table card in your shell scrollback:
-  ```text
-  ╭── 📥 Download Complete • 1 Video ──────────────────────────────────────────────────────────╮
-  │                                                                                            │
-  │   #     Video Title                                Format         Size          Status     │
-  │  ────────────────────────────────────────────────────────────────────────────────────────  │
-  │   01    what is love?                              1080p H.265    5.6 MB        ✓ Saved    │
-  │                                                                                            │
-  ╰────────────── ⏱ 00:22 │ 📦 5.6 MB │ 🚀 0.3 MB/s │ ✅ 1/1 Saved │ 📁 ~/Videos/Downloads ────╯
-  ```
-- **📐 Mathematical Unicode Alignment**: Uses [`unicode_width`](https://crates.io/crates/unicode-width) to guarantee zero border drift or offset issues regardless of emojis, Japanese/CJK text, or special characters.
-
----
-
-## ⌨️ Keybindings in TUI
-
-| Key | Action |
-| :--- | :--- |
-| **`Enter`** | Start download with selected preset |
-| **`1` – `6`** | Jump directly to preset by number |
-| **`j` / `k`** or **`↓` / `↑`** | Navigate through presets list |
-| **`u`** | Open URL input / paste modal |
-| **`q`** / **`Esc`** / **`Ctrl+C`** | Abort and cleanly restore terminal |
-
----
-
-## 🚀 Installation & Build
-
-### 1. Build from Source
-
-Ensure you have Rust and Cargo installed:
+## Build
 
 ```bash
-cd mediafetch
 cargo build --release
-```
-
-The optimized binary will be created at `target/release/mediafetch`.
-
-### 2. Install to PATH
-
-Copy or symlink the compiled binary into your local bin directory:
-
-```bash
 cp target/release/mediafetch ~/.local/bin/mediafetch
-chmod +x ~/.local/bin/mediafetch
-
-# Optional shorthand alias:
 ln -sf ~/.local/bin/mediafetch ~/.local/bin/mf
 ```
 
----
-
-## 📖 Usage Examples
+## Usage
 
 ```bash
-# 1. Clipboard Auto-Detect (Copy a YouTube/media link, then run bare)
-mediafetch
-
-# 2. Direct URL Download (Opens TUI with default 1080p Video preset)
-mediafetch "https://www.youtube.com/watch?v=..."
-
-# 3. Pre-select a Preset (Opens TUI with preset focused)
-mediafetch music "https://www.youtube.com/watch?v=..."
-mediafetch flac "https://www.youtube.com/watch?v=..."
-mediafetch shorts "https://www.youtube.com/watch?v=..."
-
-# 4. View Help & Presets List
+mediafetch                                  # use the clipboard URL
+mediafetch "https://youtube.com/watch?v=…"  # start with that URL
+mediafetch music "https://…"                # preselect a preset
+mediafetch flac "https://…"
 mediafetch --help
 ```
+
+### Keys
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Download with the selected preset |
+| `1`–`6` | Select a preset |
+| `j` / `k`, arrows | Move through presets |
+| `u` | Enter or paste a URL |
+| `q`, `Esc`, `Ctrl+C` | Quit and restore the terminal |
+
+## Source layout
+
+| File | Role |
+| --- | --- |
+| `src/main.rs` | Argument parsing, clipboard detection, event loop, notifications, summary output |
+| `src/ui.rs` | Ratatui rendering: preset list, inspector, progress, URL modal |
+| `src/presets.rs` | Preset definitions and their `yt-dlp` flags |
+| `src/downloader.rs` | Runs `yt-dlp`, parses progress, handles errors |
+| `src/lyrics.rs` | LRCLIB lookup, `.lrc` writer, tag embedding |
+| `src/metadata.rs` | Fetches title, creator, duration, views and upload date |
+
+## Requirements
+
+- `yt-dlp` and `ffmpeg`
+- `wl-clipboard` or `xclip` for clipboard detection
+- `libnotify`/`notify-send` if you want desktop notifications
+- A terminal with Unicode support (the summary table uses box drawing and emoji)
+
+The older Python implementation is in [`../deprecated-mediafetch/`](../deprecated-mediafetch/) and is no longer maintained.

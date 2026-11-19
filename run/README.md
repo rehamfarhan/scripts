@@ -1,91 +1,69 @@
-# 🎮 Game Launcher (`run`)
+# run
 
-A blazing-fast, nerdy-cool TUI game launcher, telemetry inspector, and session tracker rewritten natively in **Rust** using **Ratatui** and **Crossterm**.
+A game launcher for the terminal.
 
----
+The problem it solves is mostly about the games that aren't in Steam: a folder in `~/Games`, maybe a Windows executable that needs a particular Wine prefix, maybe a broken Ctrl key that needs a remap for one game only, plus the question of how long you've actually played it. Doing that by hand means one shell script per game and no record of anything.
 
-## 📋 Technical Overview
+`run` keeps a library of those folders, generates a launcher script per game, and gives you one place to change the settings, rate the game and see the playtime.
 
-- **Language**: Rust (Edition 2021)
-- **Framework**: [Ratatui](https://github.com/ratatui/ratatui) 0.30 + [Crossterm](https://github.com/crossterm-rs/crossterm) 0.29
-- **Startup Latency**: <2 ms (compiled native ELF binary)
-- **Target Command**: `run`
-- **Storage**: SQLite at `~/Games/.run.db` (legacy `~/Games/.run_registry.json` and `.run_stats.json` are auto-migrated on first run, then renamed to `.bak`)
+## What it does
 
----
+- Lists games from `~/Games` in a two-pane TUI: library on the left, details and actions on the right.
+- Shows per-game playtime, session count, last played time, rating, executable, size, and the Wine/SDL settings currently in use.
+- Runs games in the foreground and records the session length when they exit.
+- Generates `start_game.sh` for each game. Settings written by `run` go inside marked blocks so manual edits elsewhere survive.
+- Per-game settings: Wine prefix, virtual desktop resolution, DXVK HUD, SDL video driver, and the main executable.
+- Optional `keyd` remapping before launch (for example, mapping left Shift to left Ctrl on a laptop with a dead key). Applied for the session and cleaned up afterwards.
+- Quick launch: `run <query>` starts a matching game without opening the TUI.
+- Creates a `.desktop` shortcut if you want the game in rofi or your app menu.
 
-## ✨ Features
+Quick launch only matches games already in the library. New folders in `~/Games` are picked up the next time the TUI is opened.
 
-- **Dual-Pane Cyber-Dashboard**:
-  - **Left Pane (Library)**: Clean, focused game list with platform icons (`🐧`/`💻`), titles, and real-time fuzzy search filtering (`/`).
-  - **Right Top Pane (Telemetry & Specs Inspector)**: Showcases star ratings (`⭐⭐⭐⭐⬛ (8/10 • Great)`), cumulative playtime (`14.2h`), total session count (`Session #7`), last played timestamp (`2h ago`), game folder, executable path, file size, Wine/SDL drivers, and active `keyd` keyboard patch.
-  - **Right Bottom Pane (Quick Actions & Hotkeys)**: Full keybinding cheatsheet and tips ticker.
-- **In-Place Modal Dialogs**: No screen flickering or nested sub-shells. In-terminal modals for:
-  - ⭐ **Rate Game**: 0 to 10 star rating selector (0 = Unrated).
-  - ⌨️ **Keyboard Patches (keyd)**: Zero-sudo runtime key remapping (e.g. Left Shift -> Left Ctrl for broken Ctrl keys) with automatic cleanup traps on exit.
-  - ⚙️ **Execution Settings**: Custom Wine prefix, Virtual Desktop resolution, DXVK Vulkan HUD, and SDL video driver overrides.
-  - 🛠️ **Change Main Binary**: Heuristic binary scanner with recommended badges (`⭐ Recommended Main Binary`).
-  - ✏️ **Rename Game**: Inline text editing with wrapper updates.
-  - 🧙 **New Games Onboarding Wizard**: Multi-step guided walkthrough for newly added game directories in `~/Games`.
-- **Zero-Sudo Keyboard Patches (`keyd`)**:
-  - Automatically executes `keyd bind` in-memory before launching.
-  - Injects cleanup traps in `start_game.sh` and launcher safety fallbacks so default keyboard bindings are always restored on exit.
-- **Attached Process Execution & Session Tracking**:
-  - Clean terminal handoff: streams game stdout/stderr directly to terminal.
-  - Wall-clock session duration tracking saved automatically to `.run.db`.
-- **Centered Post-Game Session Recap Screen**:
-  - Color-coded recap card with rounded borders, sparkles (`✨`), duration, total playtime, rating, session end date, platform, and online stoic/gaming quotes (fetched with a short timeout and offline fallback).
-- **Launcher Script Generation**:
-  - `start_game.sh` is generated with a marked env section (between `RUN-MANAGED:ENV` comment markers) that settings changes patch in-place. Manual edits outside that section are preserved across patches. `Ctrl+R` is the full-reset escape hatch — it regenerates the script from scratch, discarding all manual edits.
-- **Quick-Launch Mode (`run <query>`)**:
-  - Instant direct launch (<5ms) without opening the TUI dashboard:
-    ```bash
-    run balatro
-    run rerun
-    ```
-  - **Stays instant by design**: quick-launch matches only games already in the
-    SQLite library and never scans the games directory. New folders are
-    discovered the next time the TUI dashboard is opened (onboarding wizard /
-    folder scan) — so after dropping a new game into `~/Games`, run the TUI once
-    before expecting `run <name>` to find it.
+## Storage
 
----
+Everything is kept in SQLite at `~/Games/.run.db`. The old `.run_registry.json` and `.run_stats.json` files are imported on first run and then renamed to `.bak`.
 
-## 🚀 Building & Installation
-
-Compile the release binary (what actually ships — `run.sh` builds it for you if
-it's missing):
+## Build and install
 
 ```bash
 cargo build --release
-```
-
-Make `run` resolve to the release launcher with one symlink (`run.sh`
-auto-builds on first use, then execs `target/release/run`):
-
-```bash
 ln -sf "$(pwd)/run.sh" ~/.local/bin/run
 ```
 
----
+`run.sh` builds the binary if it's missing, then executes `target/release/run`.
 
-## ⌨️ Keybindings
+## Usage
+
+```bash
+run          # open the library
+run balatro  # quick launch
+```
+
+## Keybindings
 
 | Key | Action |
-| :--- | :--- |
-| `Enter` | Launch selected game in foreground |
-| `r` | Rate game (0 - 10 Stars modal) |
-| `f` | Toggle favorite (pin to top) |
-| `s` / `S` | Cycle sort field / toggle ascending-descending |
-| `i` | Toggle the quick-actions panel |
-| `p` / `P` | Keyboard Patch (keyd remap modal) |
-| `c` | Execution & Video Driver settings |
-| `e` | Edit launcher wrapper script in `$EDITOR` |
-| `d` | Create system `.desktop` application shortcut |
-| `o` | Open game directory in file manager (`spf` / `xdg-open`) |
-| `m` | Change main executable binary |
-| `n` | Rename game entry |
-| `x` / `Delete` | Remove launcher entry (preserves playtime stats) |
-| `Ctrl+R` | Reset launcher script (regenerates start_game.sh, with confirmation) |
-| `/` | Focus real-time search filter |
+| --- | --- |
+| `Enter` | Launch the selected game |
+| `r` | Rate (0–10) |
+| `f` | Toggle favourite (pins to top) |
+| `s` / `S` | Change sort field / direction |
+| `i` | Toggle the actions panel |
+| `p` | `keyd` keyboard patch |
+| `c` | Execution and video driver settings |
+| `e` | Edit the launcher script in `$EDITOR` |
+| `d` | Create a `.desktop` shortcut |
+| `o` | Open the game folder |
+| `m` | Change the main executable |
+| `n` | Rename the entry |
+| `x` / `Delete` | Remove the entry (stats are kept) |
+| `Ctrl+R` | Regenerate `start_game.sh` from scratch |
+| `/` | Search |
 | `q` / `Esc` | Quit |
+
+## Requirements
+
+- Rust and Cargo to build
+- A terminal with Unicode support
+- `wine` for Windows games
+- `keyd` if you use keyboard patches
+- `xdg-open` or `spf` for opening folders

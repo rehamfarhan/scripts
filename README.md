@@ -1,71 +1,66 @@
-# 🛠️ Custom Scripts Collection
+# scripts
 
-Welcome to my personal collection of custom utility scripts! This repository serves as a centralized hub for lightweight, terminal-centric tools built for system management, productivity, media handling, and entertainment on Linux/Wayland environments.
+A pile of small tools I use on Linux/Wayland, mostly for the terminal. Each one lives in its own folder with the source and a README that explains what it is for and how to use it.
 
-Each utility is organized into its own standalone directory containing the executable script and a dedicated `README.md`. When browsing this repository on GitHub or locally, clicking into any script folder displays the code alongside its full documentation.
+They're not a framework and they don't share a library. The idea is that any folder here can be read, copied or deleted on its own.
 
----
+## What's in here
 
-## 🗂️ Script Directory Index
+| Folder | Command | Language | What it does |
+| --- | --- | --- | --- |
+| [`money/`](money/) | `money` | Python | Ledger for daily spending, income, reservations and month closures. |
+| [`mediafetch/`](mediafetch/) | `mediafetch`, `mf` | Rust | Downloads video and audio with `yt-dlp` using fixed presets, plus lyrics tagging. |
+| [`deprecated-mediafetch/`](deprecated-mediafetch/) | — | Python | The old Python version of mediafetch. Kept for reference, not maintained. |
+| [`run/`](run/) | `run` | Rust | Launches games with per-game settings, keyboard patches and playtime tracking. |
+| [`modfetch/`](modfetch/) | `modfetch` | Python | Installs Minecraft mods, modpacks, resource packs and shaders from Modrinth. |
+| [`ddlclauncher/`](ddlclauncher/) | `ddlclauncher` | Bash | Scans for DDLC mods, writes launchers for them and runs them from a menu. |
+| [`keydmgr/`](keydmgr/) | `keydmgr` | Python | Adds, changes and removes `keyd` bindings without editing the config by hand. |
+| [`mkrofi/`](mkrofi/) | `mkrofi` | Bash | Creates `.desktop` entries so commands appear in rofi, dmenu or app menus. |
+| [`scrlink/`](scrlink/) | `scrlink` | Bash | Puts a script in `/usr/local/bin` and moves loose scripts into folders. |
+| [`cngtf/`](cngtf/) | `cngtf` | Python | Changes the system font and emoji font across GTK, Qt, terminal and Wayland apps. |
+| [`barr/`](barr/) | `barr` | Bash | Restarts waybar after config changes. |
+| [`raminfo/`](raminfo/) | `raminfo` | Bash | Prints RAM and swap usage with bars and a full `/proc/meminfo` breakdown. |
+| [`rng/`](rng/) | `rng` | Python | Random number generator with configurable bounds and live re-rolling. |
+| [`rngname/`](rngname/) | `rngname` | Python | Renames image files to random names, without collisions. |
+| [`morsegen/`](morsegen/) | `morsegen` | Python | Encodes text to Morse and decodes it back, with custom symbols. |
 
-| Script / Folder | Command | Language | Description |
-| :--- | :--- | :--- | :--- |
-| [**`money/`**](money/) | `money` | Python 3 | Git-inspired terminal financial ledger with quick entry syntax, reservation system, and ASCII logging. |
-| [**`mediafetch/`**](mediafetch/) | `mediafetch` / `mf` | Rust | Blazing-fast (<3ms) Ratatui TUI wrapper for `yt-dlp` with smart presets, LRCLIB lyrics tagging, and pixel-perfect stats cards. |
-| [**`deprecated-mediafetch/`**](deprecated-mediafetch/) | — | Python 3 | Legacy Python implementation of mediafetch (deprecated; superseded by Rust Ratatui version). |
-| [**`run/`**](run/) | `run` | Python 3 | Interactive `fzf` game launcher & wizard with Wine prefix management, registry tracking, and quick-launch mode. |
-| [**`ddlclauncher/`**](ddlclauncher/) | `ddlclauncher` | Bash | Interactive DDLC mod manager featuring thematic `fzf` UI, automatic scanner, launcher creator, and executable detection. |
-| [**`morsegen/`**](morsegen/) | `morsegen` | Python 3 | Bi-directional Morse code encoder and decoder with custom symbol support and distinct character validation. |
-| [**`rng/`**](rng/) | `rng` | Python 3 | Interactive terminal random number generator with bound inclusion/exclusion options, float precision, and live keypress rolling. |
-| [**`rngname/`**](rngname/) | `rngname` | Python 3 | Collision-proof random picture renamer for wallpaper and image directories with dry-run and recursive support. |
-| [**`mkrofi/`**](mkrofi/) | `mkrofi` | Bash | Interactive `.desktop` application entry creator to register custom terminal commands in Rofi / dmenu menus. |
-| [**`barr/`**](barr/) | `barr` | Bash | Safe restarter script for Waybar to cleanly reload status bar configurations without disrupting desktop sessions. |
-| [**`keydmgr/`**](keydmgr/) | `keydmgr` | Python 3 | Intelligent terminal manager & interactive configurator for `keyd` with AST parsing, pre-flight validation, and safe sudo staging. |
-| [**`scrlink/`**](scrlink/) | `scrlink` | Bash | Intelligent helper tool to symlink scripts to `/usr/local/bin`, featuring `fzf` selection and automatic folder migration. |
-| [**`modfetch/`**](modfetch/) | `modfetch` | Python 3 | Paru-style Modrinth installer for Minecraft mods, modpacks, resource packs, and shader packs with dependency resolution. |
-| [**`raminfo/`**](raminfo/) | `raminfo` | Bash | Well-formatted display of RAM and swap usage with visual progress bars, showing total, used, available, and detailed breakdown. |
+`neovimconf/` is my Neovim config (an NvChad setup), not a command, so it isn't in the list.
 
----
+## Installing
 
-## 🚀 Installation & System-Wide Setup
-
-All scripts in this repository can be symlinked to `/usr/local/bin` using the included `scrlink` utility for system-wide execution.
+The scripts are used straight out of this directory. `scrlink` creates the symlinks in `/usr/local/bin`, so there's only ever one copy of each file.
 
 ```bash
-# 1. Symlink scrlink itself first
+# link scrlink itself first
 sudo ./scrlink/scrlink.sh scrlink/scrlink.sh scrlink
 
-# 2. Symlink any script interactively using fzf
+# pick a script from the fzf menu
 scrlink
 
-# 3. Or symlink a specific script directly:
+# or name one directly
 scrlink money
 scrlink mediafetch mf
 ```
 
----
+After that the command name works from anywhere. Editing the file in this repo changes the command immediately.
 
-## 🏗️ Repository Architecture & Workflow
+## Adding a new script
 
-To maintain clean and uncluttered documentation:
+Drop the file in the repo root and run `scrlink` on it:
 
-1. **Modular Directory Structure**: Every utility lives inside its own named subfolder (`<script_name>/`).
-2. **Dedicated Documentation**: Each subfolder contains a standalone `README.md` detailing technical specifications, features, CLI references, and examples.
-3. **Adding New Scripts**: Simply drop a new script (e.g. `myscript.py`) into the `scripts/` directory and run:
-   ```bash
-   scrlink myscript.py
-   ```
-   `scrlink` will automatically:
-   - Create a standalone `myscript/` folder.
-   - Move `myscript.py` into `myscript/myscript.py`.
-   - Create a starter `README.md` in `myscript/`.
-   - Register the `/usr/local/bin/myscript` symlink.
+```bash
+scrlink myscript.py
+```
 
----
+It will move it to `myscript/myscript.py`, create a starter README if one doesn't exist, and link `/usr/local/bin/myscript`. Then fill in the README and add a row to the table above.
 
-## ⚙️ Requirements & Dependencies
+## Requirements
 
-- **Shell**: Bash 4+
-- **Rust**: Rust 1.75+ & Cargo (for `mediafetch`)
-- **Python**: Python 3.8+
-- **Core CLI Utilities**: `fzf`, `yt-dlp`, `aria2c`, `ffmpeg`, `waybar` (optional, for `barr`), `wine` (optional, for Windows DDLC mods).
+Bash and Python 3 cover most of the repo. Individual tools also want:
+
+- `git` and `fzf` for `scrlink`, `keydmgr`, `rng` menus and `ddlclauncher`
+- `cargo` / Rust for `run` and `mediafetch`
+- `yt-dlp`, `ffmpeg`, and optionally `aria2c` for `mediafetch`
+- `wine` for Windows DDLC mods in `ddlclauncher`
+- `waybar` and Hyprland for `barr`
+- `keyd` for `keydmgr`

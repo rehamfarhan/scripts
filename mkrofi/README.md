@@ -1,44 +1,38 @@
-# 🚀 Rofi Entry Creator (`mkrofi.sh`)
+# mkrofi
 
-Quickly generate standard-compliant desktop launcher configuration files (`.desktop`) to make custom commands and scripts searchable and launchable in Rofi, dmenu, or desktop application menus.
+Creates `.desktop` entries for commands and scripts.
 
----
+A script in your home directory isn't visible to rofi, dmenu or the app menu until there's a `.desktop` file for it, and writing one by hand means remembering the format, the icon name and the right directory. `mkrofi` asks a few questions and writes the file for you.
 
-## 📋 Technical Overview
+## What it does
 
-- **Language**: Bash (`#!/usr/bin/env bash`)
-- **Dependencies**: `bash`, `coreutils`
-- **System Location**: `mkrofi/mkrofi.sh`
-- **Target Command**: `mkrofi`
-- **Target Desktop Location**: `~/.local/share/applications/`
+Prompts for:
 
----
+- application name
+- command, with arguments
+- description
+- icon (path or theme icon name)
+- whether it should open in a terminal
+- categories
 
-## ✨ Features
+Then writes a standard FreeDesktop entry to `~/.local/share/applications/` and makes it executable, so launchers pick it up on their next index.
 
-- **Guided Configuration**: Prompts interactively for Application Name, Command path/arguments, Description, Icon path or name, Terminal execution mode (`y/n`), and Categories.
-- **Standards Compliant**: Generates compliant FreeDesktop `.desktop` files.
-- **Auto-Registration**: Saves entries directly to `~/.local/share/applications/` and makes them executable for immediate menu indexing.
-
----
-
-## 🚀 Setup & Installation
-
-Link the script to `/usr/local/bin` using `scrlink`:
+## Install
 
 ```bash
 sudo ../scrlink/scrlink.sh mkrofi/mkrofi.sh mkrofi
-# or using scrlink helper:
+# or
 sudo scrlink mkrofi
 ```
 
----
-
-## 📖 Usage
+## Usage
 
 ```bash
-# Run interactive desktop entry generator
 mkrofi
 ```
 
-Follow the interactive prompts to create your `.desktop` launcher.
+Answer the prompts. The new entry appears in rofi/dmenu once the launcher refreshes; if it doesn't show up immediately, reopen the launcher or log out and back in.
+
+## Requirements
+
+Bash and coreutils. Nothing else.

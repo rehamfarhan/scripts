@@ -1,48 +1,42 @@
-# 📡 Morse Generator (`morsegen.py`)
+# morsegen
 
-A flexible, bi-directional Morse code encoder and decoder supporting custom symbols, distinct character validation, and clean CLI flags/subcommands.
+Converts text to Morse code and back.
 
----
+Useful for practice, for testing a decoder, or for producing Morse without opening a web page. The symbols are configurable, because not everything uses `.` and `-`; some keys, logbooks and study material use `·`, `_` or other marks.
 
-## 📋 Technical Overview
+## What it does
 
-- **Language**: Python 3
-- **Dependencies**: Python standard library (`argparse`, `sys`)
-- **System Location**: `morsegen/morsegen.py`
-- **Target Command**: `morsegen`
+- `encode`: text to Morse.
+- `decode`: Morse to text.
+- `--dot`, `--dash`, `--sep`: use different symbols for dot, dash and the word separator.
+- Rejects configurations where two of those symbols are the same, since the output would be ambiguous.
 
----
+Both subcommands and short flags work. `morsegen encode "HI"` and `morsegen -e "HI"` are the same.
 
-## ✨ Features
-
-- **Subcommand & Flag Modes**: Use either descriptive subcommands (`encode`, `decode`) or quick flags (`-e`, `-d`).
-- **Bi-directional**: Easily convert plain text to Morse code or decode Morse code back to text.
-- **Custom Symbols**: Configure custom characters for dots, dashes, and word separators.
-- **Distinct Characters Validation**: Ensures the dot, dash, and separator symbols are distinct and do not overlap.
-
----
-
-## 🚀 Setup & Installation
-
-Link the script to `/usr/local/bin` using `scrlink`:
+## Install
 
 ```bash
 sudo ../scrlink/scrlink.sh morsegen/morsegen.py morsegen
-# or using scrlink helper:
+# or
 sudo scrlink morsegen
 ```
 
----
-
-## 📖 Usage Examples
+## Usage
 
 ```bash
-# Encode text using subcommand
-python3 morsegen.py encode "HELLO WORLD"
+morsegen encode "HELLO WORLD"
+morsegen decode ".... . .-.. .-.. --- / .-- --- .-. .-.. -.."
 
-# Decode Morse code using flags
-python3 morsegen.py -d ".... . .-.. .-.. --- / .-- --- .-. .-.. -.."
+# same thing with flags
+morsegen -e "HELLO WORLD"
+morsegen -d ".... . .-.. .-.. ---"
 
-# Encode text using custom symbols (dot: '.', dash: '_', sep: '/')
-python3 morsegen.py encode "HELLO" --dot "." --dash "_" --sep "/"
+# custom symbols
+morsegen encode "HELLO" --dot "." --dash "_" --sep "/"
 ```
+
+Words are separated by `/` by default. Letters are separated by spaces.
+
+## Requirements
+
+Python 3. No external packages.

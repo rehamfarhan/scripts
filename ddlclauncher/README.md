@@ -1,51 +1,41 @@
-# 💔 DDLC Mod Launcher (`ddlclauncher.sh`)
+# ddlclauncher
 
-A thematic interactive manager for Doki Doki Literature Club (DDLC) mods, offering automatic launcher creation, mod directory scanning, and execution.
+A menu for Doki Doki Literature Club mods.
 
----
+DDLC mods usually ship as a folder with a renamed executable, sometimes a `.exe` that needs Wine, sometimes a shell script or a Python entry point. Keeping track of which binary in which folder starts which mod gets old fast. This script scans the mods folder, works out what to run, and keeps a launcher for each mod in one menu.
 
-## 📋 Technical Overview
+## How it works
 
-- **Language**: Bash (`#!/usr/bin/env bash`)
-- **Dependencies**: `fzf`, `bash`, `python3` (for `.py` mods), `wine` (for `.exe` mods)
-- **System Location**: `ddlclauncher/ddlclauncher.sh`
-- **Target Command**: `ddlclauncher`
-- **Data Location**: `~/DDLC Mods/.launchers/` and `mod_database.txt`
+- Looks through `~/DDLC Mods` for mod folders.
+- Finds a likely entry point inside each one: `.sh`, `.py`, or `.exe` (run through `wine`).
+- Asks where to point, then writes a small launcher script to `~/DDLC Mods/.launchers/`.
+- Records the result in `mod_database.txt` so the menu doesn't rescan every time.
+- Runs the chosen mod detached with `setsid`, so closing the terminal doesn't kill the game.
 
----
+The menu is `fzf`, with random DDLC-themed symbols in the labels. Press `Tab` on an entry to delete its launcher and clear the database entry.
 
-## ✨ Features
-
-- **Mod Directory Scanning**: Automatically scans `~/DDLC Mods` for new directories and identifies executable entry points (`.sh`, `.py`, `.exe` via Wine).
-- **Auto-Generated Launchers**: Interactively creates launcher shell scripts stored in `~/DDLC Mods/.launchers/`.
-- **Thematic Visual UI**: Uses `fzf` with randomized thematic emojis (💔, 🩸, 🧠, 🌸, 🎭, 🖤, 🕊️, etc.) matching the DDLC visual aesthetic.
-- **Launcher Deletion (`TAB`)**: Press `TAB` within the selection menu to instantly remove a launcher script and reset its database entry.
-- **Detached Execution**: Runs games in detached background processes (`setsid`).
-
----
-
-## 🚀 Setup & Installation
-
-Link the script to `/usr/local/bin` using `scrlink`:
+## Install
 
 ```bash
 sudo ../scrlink/scrlink.sh ddlclauncher/ddlclauncher.sh ddlclauncher
-# or using scrlink helper:
+# or
 sudo scrlink ddlclauncher
 ```
 
----
-
-## 📖 Usage
+## Usage
 
 ```bash
-# Run interactive scanner and launcher menu
-./ddlclauncher.sh
-# or if symlinked:
 ddlclauncher
 ```
 
-### Hotkeys in Menu
-- **`ENTER`**: Launch selected DDLC Mod.
-- **`TAB`**: Remove launcher configuration for selected mod.
-- **`ESC` / `Ctrl+C`**: Exit menu.
+- `Enter` starts the selected mod.
+- `Tab` removes its launcher.
+- `Esc` or `Ctrl+C` exits.
+
+## Requirements
+
+- `fzf`
+- `python3` for `.py` mods
+- `wine` for `.exe` mods
+
+Mods are expected in `~/DDLC Mods`. Launchers and the database are kept in that folder too.

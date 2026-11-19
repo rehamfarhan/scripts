@@ -1,54 +1,42 @@
-# 🔗 Script Linker (`scrlink.sh`)
+# scrlink
 
-An intelligent helper script to package, organize, and symlink repository scripts into `/usr/local/bin` for system-wide CLI access. Supports interactive `fzf` selection and automatic folder migration.
+Links scripts into `/usr/local/bin` and keeps them in folders.
 
----
+Running `~/scripts/money/money.py` from anywhere means typing the path or setting up aliases. `scrlink` makes a symlink in `/usr/local/bin` instead, so the command is just `money` and the file stays in the repo where it can be edited and versioned.
 
-## 📋 Technical Overview
+It also handles the case where a new script was dropped into the repo root: it moves it into its own folder and creates a starter README.
 
-- **Language**: Bash (`#!/usr/bin/env bash`)
-- **Dependencies**: `bash`, `coreutils`, `fzf` (optional for interactive selection), `git` (optional for version control migration)
-- **System Location**: `scrlink/scrlink.sh`
-- **Target Command**: `scrlink`
+## What it does
 
----
+- With no arguments, opens an `fzf` list of scripts in the repo.
+- Resolves the script whether you give a path (`money/money.py`), a bare filename (`money.py`), or a folder name (`money`).
+- Uses the filename without its extension as the command name unless you pass one.
+- For a loose script in the root, creates `<name>/`, moves the file in (with `git mv` if it's tracked), writes a starter `README.md`, then links it.
+- If the move fails, warns and links the script where it currently is.
 
-## ✨ Features
-
-- **Interactive `fzf` Selection**: Run `scrlink` with no arguments to launch an interactive menu for browsing and selecting any script in the repository.
-- **Automatic Subfolder Migration**: When a new script is dropped directly into the `scripts/` root (e.g. `myscript.py`), running `scrlink myscript.py` automatically:
-  1. Creates a standalone folder (`myscript/`).
-  2. Moves `myscript.py` into `myscript/myscript.py` (via `git mv`).
-  3. Generates a starter `README.md` in `myscript/` if one doesn't exist yet.
-  4. Registers the symlink in `/usr/local/bin/myscript`.
-- **Smart Target Defaults**: Automatically defaults target command name to the script's basename without extension if omitted (e.g., `money.py` $\rightarrow$ `money`).
-- **Flexible Path Resolution**: Resolves paths whether specified by relative script path (`money/money.py`), bare filename (`money.py`), or directory name (`money`).
-- **Resilient Fallback**: If creating the subfolder or moving the script fails for any reason, `scrlink` warns gracefully and still registers the `/usr/local/bin` symlink for the script at its current location.
-
----
-
-## 🚀 Setup & Installation
-
-Symlink `scrlink` itself to `/usr/local/bin`:
+## Install
 
 ```bash
 sudo ./scrlink/scrlink.sh scrlink/scrlink.sh scrlink
 ```
 
----
-
-## 📖 Usage Examples
+## Usage
 
 ```bash
-# Launch interactive menu to select a script using fzf
-scrlink
-
-# Link a script by filename (auto-migrates to folder if in root)
-scrlink money.py
-
-# Link a script by subfolder path and specify target command name
-scrlink money/money.py money
-
-# Link using directory name
-scrlink ytvideo
+scrlink                          # fzf menu
+scrlink money.py                 # link, moving it into money/ first
+scrlink money/money.py money     # explicit source and command name
+scrlink ytvideo                  # folder name
+scrlink mediafetch mf            # give mediafetch the name mf
 ```
+
+## Changing or removing a link
+
+The symlinks live in `/usr/local/bin` and point back into this repo. Re-run `scrlink` after moving a file; remove a command with `sudo rm /usr/local/bin/<name>`.
+
+## Requirements
+
+- Bash
+- `fzf` for the interactive menu (optional if you always pass arguments)
+- `git` for `git mv` (optional)
+- write access to `/usr/local/bin`, usually through `sudo`

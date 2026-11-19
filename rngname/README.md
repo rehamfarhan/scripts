@@ -1,58 +1,40 @@
-# 🎲 Random Picture Renamer (`rngname.py` / `rngname`)
+# rngname
 
-A lightweight Python utility designed to rename wallpaper and picture files to randomized alphanumeric strings, preventing naming conflicts and cleaning up messy image directory filenames.
+Renames image files to random strings.
 
----
+Wallpaper and screenshot folders tend to fill up with names that collide when you copy from different sources: `image (1).jpg`, `wallpaper.jpg`, the same filename from three different packs. `rngname` gives every file a random name and checks for collisions before touching anything.
 
-## 📋 Technical Overview
+## What it does
 
-- **Language**: Python 3 (`#!/usr/bin/env python3`)
-- **Dependencies**: None (Standard Library only: `argparse`, `random`, `pathlib`, `string`)
-- **System Location**: `rngname/rngname.py`
-- **Target Command / Shorthand**: `rngname`
-- **Default Directory**: `~/Pictures/wallpapers`
-- **Supported Formats**: `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp`, `.avif`, `.svg`, `.heic`, `.jxl`, and more.
+- Scans a folder for image files (`.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp`, `.avif`, `.svg`, `.heic`, `.jxl`, among others).
+- Generates a random name for each file, checking against both existing filenames and the names already planned in this run.
+- Keeps the original extension.
+- Can recurse into subfolders.
+- `--dry-run` prints the plan without renaming.
+- Name length is configurable.
 
----
+Default folder is `~/Pictures/wallpapers`.
 
-## ✨ Features
-
-- **🛡️ Collision-Proof Renaming**: Pre-calculates unique randomized destination filenames and checks against both existing and planned names before renaming.
-- **📁 Target Folder Flexibility**: Renames images in `~/Pictures/wallpapers` by default, or accepts any custom folder as an argument.
-- **🔍 Dry-Run Simulation (`-n` / `--dry-run`)**: Preview proposed renames safely without modifying any files on disk.
-- **📂 Recursive Scanning (`-r` / `--recursive`)**: Process nested subdirectories of images in a single pass.
-- **📏 Customizable Length (`-l` / `--length`)**: Configure random string length (defaults to 12 characters).
-
----
-
-## 🚀 Setup & Installation
-
-Link the script to `/usr/local/bin` using `scrlink`:
+## Install
 
 ```bash
 sudo ../scrlink/scrlink.sh rngname/rngname.py rngname
-# or using scrlink helper:
+# or
 sudo scrlink rngname
 ```
 
----
-
-## 📖 Usage Examples
+## Usage
 
 ```bash
-# Rename images in default directory (~/Pictures/wallpapers)
-rngname
-
-# Rename images in a specific folder
-rngname ~/Pictures/Screenshots
-rngname /path/to/wallpapers
-
-# Preview changes without modifying files (Dry Run)
-rngname ~/Pictures/wallpapers --dry-run
-
-# Recursively rename images including subfolders
-rngname ~/Pictures/wallpapers -r
-
-# Specify custom random string length (e.g. 16 characters)
-rngname ~/Pictures/wallpapers -l 16
+rngname                                  # default folder
+rngname ~/Pictures/Screenshots           # another folder
+rngname ~/Pictures/wallpapers --dry-run  # show what would happen
+rngname ~/Pictures/wallpapers -r         # include subfolders
+rngname ~/Pictures/wallpapers -l 16      # 16-character names
 ```
+
+Run a dry run first if the folder has files you care about; renames aren't reversible except by undoing them by hand.
+
+## Requirements
+
+Python 3. No external packages.

@@ -1,41 +1,38 @@
-# 📊 Waybar Restarter (`barr.sh`)
+# barr
 
-A simple helper script to cleanly terminate and restart Waybar. Ideal for applying Wayland / Hyprland / Sway status bar configuration changes without restarting your session.
+Restarts waybar.
 
----
+Waybar doesn't always pick up changes to its config or style file, and killing it by hand can leave you with no bar at all if the restart fails. This script kills the running instance and starts a fresh one in one step, which is what you usually want after editing the bar's config.
 
-## 📋 Technical Overview
+## What it does
 
-- **Language**: Bash (`#!/usr/bin/env bash`)
-- **Dependencies**: `waybar`, `killall`, `pgrep`
-- **System Location**: `barr/barr.sh`
-- **Target Command**: `barr`
+```bash
+pkill waybar
+hyprctl dispatch 'hl.dsp.exec_cmd("/home/directpass/user_scripts/waybar/waybar_toggle.sh --on")'
+```
 
----
+`pkill` stops any running waybar, then Hyprland runs the waybar toggle script with `--on`. The toggle script handles starting the bar.
 
-## ✨ Features
+The path to `waybar_toggle.sh` is hardcoded. If you move that script, edit `barr.sh` to match.
 
-- **Clean Process Termination**: Kills active `waybar` instances safely.
-- **Process Loop Guard**: Waits until all instances are fully shut down before restarting.
-- **Background Relaunch**: Launches a fresh `waybar` instance in the background.
-
----
-
-## 🚀 Setup & Installation
-
-Link the script to `/usr/local/bin` using `scrlink`:
+## Install
 
 ```bash
 sudo ../scrlink/scrlink.sh barr/barr.sh barr
-# or using scrlink helper:
+# or
 sudo scrlink barr
 ```
 
----
-
-## 📖 Usage
+## Usage
 
 ```bash
-# Restart Waybar status bar
 barr
 ```
+
+No output on success. Run it after editing `~/.config/waybar/config` or `style.css`.
+
+## Requirements
+
+- Hyprland (uses `hyprctl`)
+- `pgrep`/`pkill` from procps
+- waybar, plus the `waybar_toggle.sh` script referenced above

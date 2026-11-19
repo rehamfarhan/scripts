@@ -86,16 +86,21 @@ elif [ -f "$SCRIPTS_DIR/$SOURCE" ]; then
       README_FILE="$NEW_DIR/README.md"
       if [ ! -f "$README_FILE" ]; then
         cat >"$README_FILE" <<EOF
-# 🛠️ $DIRNAME
+# $DIRNAME
 
-Standalone utility script \`$BASENAME\`.
+What this script is for, and the problem it solves.
 
-## 📖 Usage
+## Usage
+
 \`\`\`bash
 ./$BASENAME
 \`\`\`
+
+## Requirements
+
+List anything beyond bash/python3 here.
 EOF
-        echo "📝 Created starter README.md in '$DIRNAME/README.md'."
+        echo "Created starter README.md in '$DIRNAME/README.md'."
       fi
       SCRIPT_PATH="$TARGET_FILE"
     else

@@ -1,57 +1,36 @@
-# 📊 raminfo
+# raminfo
 
-A simple, well-formatted script that displays detailed memory (RAM) and swap usage information on Linux systems.
+Prints memory usage.
 
-## 🚀 Installation
+`free -h` gives the headline numbers but not the breakdown, and it doesn't show how much of the total is actually in use at a glance. `raminfo` reads `/proc/meminfo`, calculates used memory the same way `free` does, and prints it with bars and the individual fields.
+
+## Output
+
+Overview: total, used and available, plus a bar with the used percentage.
+
+Breakdown: free, buffers, cached, SReclaimable, slab, active/inactive, mapped, shared memory, mlocked, dirty.
+
+Kernel: kernel stack and page tables.
+
+Swap: total, used and free, with a bar. Skipped if there's no swap.
+
+All values are in GB, rounded to two decimals.
+
+## Install
 
 ```bash
-# Make executable
 chmod +x raminfo.sh
-
-# Link to system path (using scrlink)
 scrlink raminfo/raminfo.sh raminfo
 ```
 
-## 📖 Usage
+## Usage
 
 ```bash
 raminfo
 ```
 
-## 📋 Output
+## Notes
 
-The script displays:
-
-### Overview
-- Total RAM
-- Used RAM (calculated)
-- Available RAM
-- Visual usage bar with percentage
-
-### Breakdown
-- Free memory
-- Buffers
-- Cached memory
-- SReclaimable
-- Slab
-- Active / Inactive
-- Mapped
-- Shmem
-- Mlocked
-- Dirty
-
-### Kernel
-- Kernel Stack
-- Page Tables
-
-### Swap (if enabled)
-- Total swap
-- Used swap
-- Free swap
-- Visual usage bar
-
-## ⚠️ Notes
-
-- Works on Linux systems with `/proc/meminfo`
-- No external dependencies required
-- All values displayed in GB
+- Linux only; it reads `/proc/meminfo`.
+- No external dependencies.
+- The "used" figure is `MemTotal - MemFree - Buffers - Cached - SReclaimable`, not `MemTotal - MemAvailable`, so it can differ from some other tools. `Available` is printed separately if that's what you want.
